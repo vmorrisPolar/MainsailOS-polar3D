@@ -18,7 +18,7 @@ source /files/00-config
 ########################################
 
 # General settings
-readonly DEPS=(python3-pip python3-venv git python3-websockets python3-cryptodome python3-requests python3-pil)
+readonly DEPS=(python3-pip python3-venv git python3-websockets python3-pycryptodome python3-requests python3-pil)
 
 ########################################
 # Install System Packages              #
@@ -40,7 +40,7 @@ sudo -u "${BASE_USER}" python3 -m venv polar-cloud/venv
 
 # Install Python dependencies
 sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install --upgrade pip
-sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets cryptodome requests pillow
+sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets pycryptodome requests pillow
 
 popd &> /dev/null || exit 1
 
