@@ -1,13 +1,12 @@
 /*!
  * Polar Cloud UI Plugin for Mainsail
- * Provides UI for configuring and managing Polar Cloud connection
+ * Adds Polar Cloud card to the MACHINE tab
  */
 
 (function() {
     'use strict';
 
     // Plugin configuration
-    const PLUGIN_NAME = 'polar_cloud';
     const API_BASE = '/server/polar_cloud';
     
     // State management
@@ -21,350 +20,241 @@
         printer_type: 'Cartesian'
     };
 
-    // UI Elements
-    let settingsPanel = null;
-    let statusDisplay = null;
-
     /**
      * Initialize the Polar Cloud plugin
      */
     function initPolarCloudPlugin() {
-        console.log('Initializing Polar Cloud Plugin');
+        console.log('Initializing Polar Cloud Plugin for MACHINE tab');
         
-        // Add settings tab
-        addSettingsTab();
+        // Wait for page to load and try to add to machine tab
+        setTimeout(addToMachineTab, 2000);
+        
+        // Try multiple times in case the page loads slowly
+        setTimeout(addToMachineTab, 5000);
+        setTimeout(addToMachineTab, 10000);
+    }
+
+    /**
+     * Add Polar Cloud card to the MACHINE tab
+     */
+    function addToMachineTab() {
+        // Look for the machine tab content area
+        const machineTab = document.querySelector('[data-testid="machine-tab"]') ||
+                          document.querySelector('#machine-tab') ||
+                          document.querySelector('.machine-tab') ||
+                          findMachineTabByContent();
+        
+        if (!machineTab) {
+            console.log('Machine tab not found, retrying...');
+            return;
+        }
+
+        // Check if already added
+        if (document.querySelector('#polar-cloud-card')) {
+            console.log('Polar Cloud card already exists');
+            return;
+        }
+
+        // Create the Polar Cloud card
+        const polarCloudCard = createPolarCloudCard();
+        
+        // Find a good place to insert it (after system loads or update manager)
+        const systemLoads = machineTab.querySelector('[data-testid="system-loads"]') ||
+                           machineTab.querySelector('.system-loads') ||
+                           machineTab.querySelector('h3');
+        
+        if (systemLoads && systemLoads.parentNode) {
+            // Insert after system loads or similar element
+            systemLoads.parentNode.insertBefore(polarCloudCard, systemLoads.nextSibling);
+        } else {
+            // Fallback: append to machine tab
+            machineTab.appendChild(polarCloudCard);
+        }
+
+        // Bind event handlers
+        bindEventHandlers();
         
         // Load initial status
         loadPolarCloudStatus();
         
-        // Set up periodic status updates
-        setInterval(loadPolarCloudStatus, 30000); // Update every 30 seconds
+        console.log('Polar Cloud card added to MACHINE tab');
     }
 
     /**
-     * Add the Polar Cloud settings tab to Mainsail
+     * Find machine tab by looking for characteristic content
      */
-    function addSettingsTab() {
-        // Wait for Mainsail to be fully loaded
-        if (typeof window.mainsail === 'undefined' || !window.mainsail.plugins) {
-            setTimeout(addSettingsTab, 1000);
-            return;
-        }
-
-        // Create the settings panel HTML
-        const settingsHTML = createSettingsHTML();
+    function findMachineTabByContent() {
+        // Look for elements that are typically in the machine tab
+        const indicators = [
+            'System Loads',
+            'Update Manager',
+            'system-loads',
+            'update-manager'
+        ];
         
-        // Add to Mainsail settings
-        const settingsContainer = document.querySelector('.settings-content') || 
-                                 document.querySelector('[data-testid="settings-content"]') ||
-                                 document.querySelector('#settings-content');
-        
-        if (settingsContainer) {
-            // Create tab button
-            const tabButton = createTabButton();
-            const tabContainer = settingsContainer.querySelector('.settings-tabs') ||
-                               settingsContainer.querySelector('.v-tabs');
+        for (const indicator of indicators) {
+            const element = document.querySelector(`[data-testid*="${indicator}"]`) ||
+                           document.querySelector(`[class*="${indicator}"]`) ||
+                           Array.from(document.querySelectorAll('*')).find(el => 
+                               el.textContent && el.textContent.includes(indicator)
+                           );
             
-            if (tabContainer) {
-                tabContainer.appendChild(tabButton);
+            if (element) {
+                // Find the parent container that looks like a tab content area
+                let parent = element.parentNode;
+                while (parent && parent !== document.body) {
+                    if (parent.classList.contains('tab-content') ||
+                        parent.classList.contains('v-tab-content') ||
+                        parent.classList.contains('machine') ||
+                        parent.id.includes('machine')) {
+                        return parent;
+                    }
+                    parent = parent.parentNode;
+                }
+                // Fallback to a reasonable parent
+                return element.parentNode?.parentNode || element.parentNode;
             }
-            
-            // Create tab content
-            const contentContainer = settingsContainer.querySelector('.settings-content-area') ||
-                                   settingsContainer.querySelector('.v-tab-content');
-            
-            if (contentContainer) {
-                settingsPanel = document.createElement('div');
-                settingsPanel.id = 'polar-cloud-settings';
-                settingsPanel.className = 'settings-panel polar-cloud-panel';
-                settingsPanel.style.display = 'none';
-                settingsPanel.innerHTML = settingsHTML;
-                contentContainer.appendChild(settingsPanel);
+        }
+        
+        return null;
+    }
+
+    /**
+     * Create the Polar Cloud card HTML
+     */
+    function createPolarCloudCard() {
+        const card = document.createElement('div');
+        card.id = 'polar-cloud-card';
+        card.className = 'v-card v-sheet theme--dark polar-cloud-card';
+        card.innerHTML = `
+            <div class="v-card__title">
+                <h3>
+                    <i class="mdi mdi-cloud-outline"></i>
+                    Polar Cloud Connection
+                </h3>
+            </div>
+            <div class="v-card__text">
+                <div class="polar-cloud-status">
+                    <div class="status-row">
+                        <span class="status-label">Status:</span>
+                        <span class="status-value" id="pc-status">
+                            <span class="status-dot inactive"></span>
+                            <span id="pc-status-text">Not Connected</span>
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Service:</span>
+                        <span class="status-value" id="pc-service-status">inactive</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Serial:</span>
+                        <span class="status-value" id="pc-serial">Not registered</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Username:</span>
+                        <span class="status-value" id="pc-username">Not set</span>
+                    </div>
+                </div>
                 
-                // Bind event handlers
-                bindEventHandlers();
-            }
-        } else {
-            // Fallback: Add to body and show as modal
-            console.warn('Could not find settings container, using fallback method');
-            createFallbackUI();
-        }
-    }
-
-    /**
-     * Create the tab button for settings
-     */
-    function createTabButton() {
-        const button = document.createElement('button');
-        button.className = 'v-tab settings-tab polar-cloud-tab';
-        button.setAttribute('data-tab', 'polar-cloud');
-        button.innerHTML = `
-            <i class="mdi mdi-cloud-outline"></i>
-            <span>Polar Cloud Connection</span>
-        `;
-        
-        button.addEventListener('click', function() {
-            showPolarCloudSettings();
-        });
-        
-        return button;
-    }
-
-    /**
-     * Create the settings panel HTML
-     */
-    function createSettingsHTML() {
-        return `
-            <div class="polar-cloud-settings">
-                <div class="settings-header">
-                    <h2>
-                        <i class="mdi mdi-cloud-outline"></i>
-                        Polar Cloud Connection
-                    </h2>
-                    <p class="settings-description">
-                        Connect your printer to the Polar Cloud service at printer4.polar3d.com
-                    </p>
-                </div>
-
-                <div class="polar-cloud-status" id="polar-cloud-status">
-                    <div class="status-card">
-                        <div class="status-header">
-                            <h3>Connection Status</h3>
-                            <div class="status-indicator" id="status-indicator">
-                                <span class="status-dot inactive"></span>
-                                <span class="status-text">Not Connected</span>
-                            </div>
-                        </div>
-                        <div class="status-details" id="status-details">
-                            <div class="status-item">
-                                <span class="label">Service Status:</span>
-                                <span class="value" id="service-status">inactive</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="label">Serial Number:</span>
-                                <span class="value" id="serial-number">Not registered</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="label">Username:</span>
-                                <span class="value" id="username-display">Not set</span>
-                            </div>
-                        </div>
+                <div class="polar-cloud-form" id="pc-form-container">
+                    <div class="form-row">
+                        <input type="email" id="pc-username-input" placeholder="Email/Username" class="form-input">
+                        <input type="password" id="pc-pin-input" placeholder="PIN" class="form-input">
                     </div>
-                </div>
-
-                <div class="polar-cloud-config">
-                    <form id="polar-cloud-form" class="config-form">
-                        <h3>Connection Settings</h3>
-                        
-                        <div class="form-group">
-                            <label for="username">Username (Email):</label>
-                            <input 
-                                type="email" 
-                                id="username" 
-                                name="username" 
-                                placeholder="your.email@example.com"
-                                required
-                            >
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="pin">PIN:</label>
-                            <input 
-                                type="password" 
-                                id="pin" 
-                                name="pin" 
-                                placeholder="Your Polar Cloud PIN"
-                                required
-                            >
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="machine_type">Machine Type:</label>
-                            <select id="machine_type" name="machine_type">
-                                <option value="Cartesian">Cartesian</option>
-                                <option value="Delta">Delta</option>
-                                <option value="CoreXY">CoreXY</option>
-                                <option value="Polar">Polar</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="printer_type">Printer Type:</label>
-                            <select id="printer_type" name="printer_type">
-                                <option value="Cartesian">Cartesian</option>
-                                <option value="Delta">Delta</option>
-                                <option value="CoreXY">CoreXY</option>
-                                <option value="Polar">Polar</option>
-                            </select>
-                        </div>
-                        
-                        <div class="form-actions">
-                            <button type="submit" id="connect-btn" class="btn btn-primary">
-                                <i class="mdi mdi-cloud-upload"></i>
-                                Connect to Polar Cloud
-                            </button>
-                            <button type="button" id="disconnect-btn" class="btn btn-warning" style="display: none;">
-                                <i class="mdi mdi-cloud-off"></i>
-                                Disconnect
-                            </button>
-                        </div>
-                    </form>
-                </div>
-
-                <div class="polar-cloud-logs" style="margin-top: 2rem;">
-                    <h3>Service Logs</h3>
-                    <div class="log-container">
-                        <textarea 
-                            id="log-output" 
-                            readonly 
-                            rows="8" 
-                            placeholder="Service logs will appear here..."
-                        ></textarea>
+                    <div class="form-row">
+                        <select id="pc-machine-type" class="form-select">
+                            <option value="Cartesian">Cartesian</option>
+                            <option value="Delta">Delta</option>
+                            <option value="CoreXY">CoreXY</option>
+                            <option value="Polar">Polar</option>
+                        </select>
+                        <select id="pc-printer-type" class="form-select">
+                            <option value="Cartesian">Cartesian</option>
+                            <option value="Delta">Delta</option>
+                            <option value="CoreXY">CoreXY</option>
+                            <option value="Polar">Polar</option>
+                        </select>
                     </div>
-                    <div class="log-actions">
-                        <button type="button" id="refresh-logs-btn" class="btn btn-secondary">
+                    <div class="form-actions">
+                        <button id="pc-connect-btn" class="btn btn-primary">
+                            <i class="mdi mdi-cloud-upload"></i>
+                            Connect
+                        </button>
+                        <button id="pc-disconnect-btn" class="btn btn-warning" style="display: none;">
+                            <i class="mdi mdi-cloud-off"></i>
+                            Disconnect
+                        </button>
+                        <button id="pc-refresh-btn" class="btn btn-secondary">
                             <i class="mdi mdi-refresh"></i>
-                            Refresh Logs
-                        </button>
-                        <button type="button" id="clear-logs-btn" class="btn btn-secondary">
-                            <i class="mdi mdi-delete"></i>
-                            Clear Logs
+                            Refresh
                         </button>
                     </div>
                 </div>
             </div>
         `;
-    }
 
-    /**
-     * Create fallback UI if settings integration fails
-     */
-    function createFallbackUI() {
-        // Create a floating widget
-        const widget = document.createElement('div');
-        widget.id = 'polar-cloud-widget';
-        widget.className = 'polar-cloud-widget';
-        widget.innerHTML = `
-            <div class="widget-header">
-                <h3>Polar Cloud</h3>
-                <button class="widget-toggle" onclick="togglePolarCloudWidget()">
-                    <i class="mdi mdi-chevron-up"></i>
-                </button>
-            </div>
-            <div class="widget-content">
-                ${createSettingsHTML()}
-            </div>
-        `;
-        
         // Add styles
-        const style = document.createElement('style');
-        style.textContent = getPolarCloudStyles() + getWidgetStyles();
-        document.head.appendChild(style);
+        addPolarCloudStyles();
         
-        // Add to body
-        document.body.appendChild(widget);
-        
-        // Bind event handlers
-        bindEventHandlers();
-        
-        // Make it globally accessible
-        window.togglePolarCloudWidget = function() {
-            const content = widget.querySelector('.widget-content');
-            const toggle = widget.querySelector('.widget-toggle i');
-            if (content.style.display === 'none') {
-                content.style.display = 'block';
-                toggle.className = 'mdi mdi-chevron-up';
-            } else {
-                content.style.display = 'none';
-                toggle.className = 'mdi mdi-chevron-down';
-            }
-        };
+        return card;
     }
 
     /**
-     * Show the Polar Cloud settings panel
-     */
-    function showPolarCloudSettings() {
-        // Hide other settings panels
-        const allPanels = document.querySelectorAll('.settings-panel');
-        allPanels.forEach(panel => panel.style.display = 'none');
-        
-        // Remove active class from all tabs
-        const allTabs = document.querySelectorAll('.settings-tab');
-        allTabs.forEach(tab => tab.classList.remove('active', 'v-tab--active'));
-        
-        // Show polar cloud panel
-        if (settingsPanel) {
-            settingsPanel.style.display = 'block';
-        }
-        
-        // Activate polar cloud tab
-        const polarTab = document.querySelector('.polar-cloud-tab');
-        if (polarTab) {
-            polarTab.classList.add('active', 'v-tab--active');
-        }
-        
-        // Load current status
-        loadPolarCloudStatus();
-    }
-
-    /**
-     * Bind event handlers for the UI
+     * Bind event handlers
      */
     function bindEventHandlers() {
-        const form = document.getElementById('polar-cloud-form');
-        const connectBtn = document.getElementById('connect-btn');
-        const disconnectBtn = document.getElementById('disconnect-btn');
-        const refreshLogsBtn = document.getElementById('refresh-logs-btn');
-        const clearLogsBtn = document.getElementById('clear-logs-btn');
+        const connectBtn = document.getElementById('pc-connect-btn');
+        const disconnectBtn = document.getElementById('pc-disconnect-btn');
+        const refreshBtn = document.getElementById('pc-refresh-btn');
 
-        if (form) {
-            form.addEventListener('submit', handleConnect);
+        if (connectBtn) {
+            connectBtn.addEventListener('click', handleConnect);
         }
         
         if (disconnectBtn) {
             disconnectBtn.addEventListener('click', handleDisconnect);
         }
         
-        if (refreshLogsBtn) {
-            refreshLogsBtn.addEventListener('click', loadServiceLogs);
-        }
-        
-        if (clearLogsBtn) {
-            clearLogsBtn.addEventListener('click', clearLogs);
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', loadPolarCloudStatus);
         }
     }
 
     /**
-     * Handle connection form submission
+     * Handle connection
      */
-    async function handleConnect(event) {
-        event.preventDefault();
+    async function handleConnect() {
+        const username = document.getElementById('pc-username-input').value;
+        const pin = document.getElementById('pc-pin-input').value;
+        const machineType = document.getElementById('pc-machine-type').value;
+        const printerType = document.getElementById('pc-printer-type').value;
         
-        const formData = new FormData(event.target);
-        const data = {
-            username: formData.get('username'),
-            pin: formData.get('pin'),
-            machine_type: formData.get('machine_type'),
-            printer_type: formData.get('printer_type')
-        };
+        if (!username || !pin) {
+            showNotification('Please enter both username and PIN', 'error');
+            return;
+        }
         
         try {
-            showLoading('Connecting to Polar Cloud...');
+            showLoading('Connecting...');
             
             const response = await fetch(`${API_BASE}/register`, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Content-Type': 'application/json',
                 },
-                body: new URLSearchParams(data)
+                body: JSON.stringify({
+                    username: username,
+                    pin: pin,
+                    machine_type: machineType,
+                    printer_type: printerType
+                })
             });
             
             const result = await response.json();
             
             if (result.success) {
-                showNotification('Successfully initiated connection to Polar Cloud', 'success');
-                setTimeout(loadPolarCloudStatus, 2000); // Reload status after 2 seconds
+                showNotification('Connection initiated successfully!', 'success');
+                setTimeout(loadPolarCloudStatus, 2000);
             } else {
                 showNotification(`Connection failed: ${result.error || 'Unknown error'}`, 'error');
             }
@@ -394,7 +284,7 @@
             const result = await response.json();
             
             if (result.success) {
-                showNotification('Successfully disconnected from Polar Cloud', 'success');
+                showNotification('Disconnected successfully!', 'success');
                 loadPolarCloudStatus();
             } else {
                 showNotification(`Disconnect failed: ${result.error || 'Unknown error'}`, 'error');
@@ -408,7 +298,7 @@
     }
 
     /**
-     * Load current Polar Cloud status
+     * Load current status
      */
     async function loadPolarCloudStatus() {
         try {
@@ -429,31 +319,32 @@
             
         } catch (error) {
             console.error('Error loading Polar Cloud status:', error);
+            // Set error state
+            document.getElementById('pc-status-text').textContent = 'Error';
+            document.getElementById('pc-service-status').textContent = 'Error';
         }
     }
 
     /**
-     * Update the status display
+     * Update status display
      */
     function updateStatusDisplay() {
-        const statusIndicator = document.getElementById('status-indicator');
-        const serviceStatus = document.getElementById('service-status');
-        const serialNumber = document.getElementById('serial-number');
-        const usernameDisplay = document.getElementById('username-display');
+        const statusText = document.getElementById('pc-status-text');
+        const statusDot = document.querySelector('#pc-status .status-dot');
+        const serviceStatus = document.getElementById('pc-service-status');
+        const serial = document.getElementById('pc-serial');
+        const username = document.getElementById('pc-username');
         
-        if (statusIndicator) {
-            const dot = statusIndicator.querySelector('.status-dot');
-            const text = statusIndicator.querySelector('.status-text');
-            
+        if (statusText && statusDot) {
             if (polarCloudState.service_status === 'active' && polarCloudState.registered) {
-                dot.className = 'status-dot active';
-                text.textContent = 'Connected';
+                statusDot.className = 'status-dot active';
+                statusText.textContent = 'Connected';
             } else if (polarCloudState.service_status === 'active') {
-                dot.className = 'status-dot warning';
-                text.textContent = 'Service Active (Not Registered)';
+                statusDot.className = 'status-dot warning';
+                statusText.textContent = 'Service Active';
             } else {
-                dot.className = 'status-dot inactive';
-                text.textContent = 'Not Connected';
+                statusDot.className = 'status-dot inactive';
+                statusText.textContent = 'Not Connected';
             }
         }
         
@@ -461,271 +352,195 @@
             serviceStatus.textContent = polarCloudState.service_status || 'inactive';
         }
         
-        if (serialNumber) {
-            serialNumber.textContent = polarCloudState.serial_number || 'Not registered';
+        if (serial) {
+            serial.textContent = polarCloudState.serial_number || 'Not registered';
         }
         
-        if (usernameDisplay) {
-            usernameDisplay.textContent = polarCloudState.username || 'Not set';
+        if (username) {
+            username.textContent = polarCloudState.username || 'Not set';
         }
     }
 
     /**
-     * Update the form based on current state
+     * Update form
      */
     function updateForm() {
-        const connectBtn = document.getElementById('connect-btn');
-        const disconnectBtn = document.getElementById('disconnect-btn');
-        const usernameInput = document.getElementById('username');
-        const machineTypeSelect = document.getElementById('machine_type');
-        const printerTypeSelect = document.getElementById('printer_type');
+        const connectBtn = document.getElementById('pc-connect-btn');
+        const disconnectBtn = document.getElementById('pc-disconnect-btn');
+        const usernameInput = document.getElementById('pc-username-input');
+        const machineType = document.getElementById('pc-machine-type');
+        const printerType = document.getElementById('pc-printer-type');
         
         if (polarCloudState.registered) {
-            if (connectBtn) {
-                connectBtn.style.display = 'none';
-            }
-            if (disconnectBtn) {
-                disconnectBtn.style.display = 'inline-block';
-            }
+            if (connectBtn) connectBtn.style.display = 'none';
+            if (disconnectBtn) disconnectBtn.style.display = 'inline-flex';
         } else {
-            if (connectBtn) {
-                connectBtn.style.display = 'inline-block';
-            }
-            if (disconnectBtn) {
-                disconnectBtn.style.display = 'none';
-            }
+            if (connectBtn) connectBtn.style.display = 'inline-flex';
+            if (disconnectBtn) disconnectBtn.style.display = 'none';
         }
         
-        // Populate form with current values
+        // Populate form
         if (usernameInput && polarCloudState.username) {
             usernameInput.value = polarCloudState.username;
         }
         
-        if (machineTypeSelect && polarCloudState.machine_type) {
-            machineTypeSelect.value = polarCloudState.machine_type;
+        if (machineType && polarCloudState.machine_type) {
+            machineType.value = polarCloudState.machine_type;
         }
         
-        if (printerTypeSelect && polarCloudState.printer_type) {
-            printerTypeSelect.value = polarCloudState.printer_type;
+        if (printerType && polarCloudState.printer_type) {
+            printerType.value = polarCloudState.printer_type;
         }
     }
 
     /**
-     * Load service logs
+     * Show loading state
      */
-    async function loadServiceLogs() {
-        const logOutput = document.getElementById('log-output');
-        if (!logOutput) return;
-        
-        try {
-            // Try to read logs from journalctl via a custom endpoint
-            const response = await fetch('/server/files/logs/polar_cloud.log');
-            if (response.ok) {
-                const logs = await response.text();
-                logOutput.value = logs;
-            } else {
-                logOutput.value = 'Unable to load logs. Check service status.';
-            }
-        } catch (error) {
-            console.error('Error loading logs:', error);
-            logOutput.value = 'Error loading logs: ' + error.message;
+    function showLoading(message) {
+        const card = document.getElementById('polar-cloud-card');
+        if (card) {
+            card.style.opacity = '0.6';
+            card.style.pointerEvents = 'none';
         }
+        console.log(`[Polar Cloud] ${message}`);
     }
 
     /**
-     * Clear log display
-     */
-    function clearLogs() {
-        const logOutput = document.getElementById('log-output');
-        if (logOutput) {
-            logOutput.value = '';
-        }
-    }
-
-    /**
-     * Show loading indicator
-     */
-    function showLoading(message = 'Loading...') {
-        // Simple loading implementation
-        const forms = document.querySelectorAll('.polar-cloud-settings form');
-        forms.forEach(form => {
-            form.style.opacity = '0.5';
-            form.style.pointerEvents = 'none';
-        });
-        
-        showNotification(message, 'info');
-    }
-
-    /**
-     * Hide loading indicator
+     * Hide loading state
      */
     function hideLoading() {
-        const forms = document.querySelectorAll('.polar-cloud-settings form');
-        forms.forEach(form => {
-            form.style.opacity = '1';
-            form.style.pointerEvents = 'auto';
-        });
+        const card = document.getElementById('polar-cloud-card');
+        if (card) {
+            card.style.opacity = '1';
+            card.style.pointerEvents = 'auto';
+        }
     }
 
     /**
      * Show notification
      */
     function showNotification(message, type = 'info') {
-        // Try to use Mainsail's notification system if available
-        if (window.mainsail && window.mainsail.notification) {
-            window.mainsail.notification(message, type);
-            return;
-        }
-        
-        // Fallback notification
         console.log(`[Polar Cloud] ${type.toUpperCase()}: ${message}`);
         
-        // Simple toast notification
-        const toast = document.createElement('div');
-        toast.className = `polar-cloud-toast toast-${type}`;
-        toast.textContent = message;
-        toast.style.cssText = `
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 12px 20px;
-            background: ${type === 'error' ? '#f44336' : type === 'success' ? '#4caf50' : '#2196f3'};
-            color: white;
-            border-radius: 4px;
-            z-index: 10000;
-            animation: slideIn 0.3s ease;
-        `;
-        
-        document.body.appendChild(toast);
-        
-        setTimeout(() => {
-            toast.style.animation = 'slideOut 0.3s ease';
-            setTimeout(() => toast.remove(), 300);
-        }, 3000);
+        // Try to use browser notification if available
+        if ('Notification' in window && Notification.permission === 'granted') {
+            new Notification('Polar Cloud', { body: message });
+        } else {
+            // Simple alert fallback
+            alert(`Polar Cloud: ${message}`);
+        }
     }
 
     /**
-     * Get CSS styles for the plugin
+     * Add CSS styles
      */
-    function getPolarCloudStyles() {
-        return `
-            .polar-cloud-settings {
-                max-width: 800px;
-                margin: 0 auto;
-                padding: 20px;
+    function addPolarCloudStyles() {
+        if (document.getElementById('polar-cloud-styles')) {
+            return; // Already added
+        }
+        
+        const style = document.createElement('style');
+        style.id = 'polar-cloud-styles';
+        style.textContent = `
+            .polar-cloud-card {
+                margin: 16px 0;
+                background: rgba(255, 255, 255, 0.05) !important;
+                border: 1px solid rgba(255, 255, 255, 0.1);
             }
-
-            .settings-header h2 {
+            
+            .polar-cloud-card .v-card__title h3 {
                 display: flex;
                 align-items: center;
                 gap: 8px;
-                margin-bottom: 8px;
-                color: #333;
+                color: #fff;
+                margin: 0;
+                font-size: 1.1rem;
             }
-
-            .settings-description {
-                color: #666;
-                margin-bottom: 24px;
+            
+            .polar-cloud-status {
+                margin-bottom: 16px;
             }
-
-            .status-card {
-                background: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 8px;
-                padding: 16px;
-                margin-bottom: 24px;
-            }
-
-            .status-header {
+            
+            .status-row {
                 display: flex;
                 justify-content: space-between;
                 align-items: center;
-                margin-bottom: 16px;
+                margin-bottom: 8px;
+                padding: 4px 0;
             }
-
-            .status-indicator {
+            
+            .status-label {
+                color: #ccc;
+                font-weight: 500;
+            }
+            
+            .status-value {
+                color: #fff;
                 display: flex;
                 align-items: center;
                 gap: 8px;
             }
-
+            
             .status-dot {
-                width: 12px;
-                height: 12px;
+                width: 8px;
+                height: 8px;
                 border-radius: 50%;
+                display: inline-block;
             }
-
+            
             .status-dot.active {
                 background: #4caf50;
-                box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+                box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
             }
-
+            
             .status-dot.warning {
                 background: #ff9800;
-                box-shadow: 0 0 8px rgba(255, 152, 0, 0.4);
+                box-shadow: 0 0 6px rgba(255, 152, 0, 0.6);
             }
-
+            
             .status-dot.inactive {
-                background: #9e9e9e;
+                background: #666;
             }
-
-            .status-details {
-                display: grid;
-                gap: 8px;
+            
+            .polar-cloud-form {
+                border-top: 1px solid rgba(255, 255, 255, 0.1);
+                padding-top: 16px;
             }
-
-            .status-item {
+            
+            .form-row {
                 display: flex;
-                justify-content: space-between;
+                gap: 8px;
+                margin-bottom: 12px;
             }
-
-            .status-item .label {
-                font-weight: 500;
-                color: #666;
-            }
-
-            .config-form {
-                background: white;
-                border: 1px solid #dee2e6;
-                border-radius: 8px;
-                padding: 20px;
-            }
-
-            .form-group {
-                margin-bottom: 16px;
-            }
-
-            .form-group label {
-                display: block;
-                margin-bottom: 4px;
-                font-weight: 500;
-                color: #333;
-            }
-
-            .form-group input,
-            .form-group select {
-                width: 100%;
+            
+            .form-input, .form-select {
+                flex: 1;
                 padding: 8px 12px;
-                border: 1px solid #ccc;
+                background: rgba(255, 255, 255, 0.1);
+                border: 1px solid rgba(255, 255, 255, 0.2);
                 border-radius: 4px;
+                color: #fff;
                 font-size: 14px;
             }
-
-            .form-group input:focus,
-            .form-group select:focus {
-                outline: none;
-                border-color: #007bff;
-                box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+            
+            .form-input::placeholder {
+                color: #aaa;
             }
-
+            
+            .form-input:focus, .form-select:focus {
+                outline: none;
+                border-color: #2196f3;
+                box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.3);
+            }
+            
             .form-actions {
                 display: flex;
-                gap: 12px;
-                margin-top: 20px;
+                gap: 8px;
+                flex-wrap: wrap;
             }
-
+            
             .btn {
-                padding: 10px 20px;
+                padding: 8px 16px;
                 border: none;
                 border-radius: 4px;
                 cursor: pointer;
@@ -733,114 +548,45 @@
                 font-weight: 500;
                 display: inline-flex;
                 align-items: center;
-                gap: 8px;
+                gap: 6px;
                 transition: all 0.2s;
+                text-decoration: none;
             }
-
+            
             .btn-primary {
-                background: #007bff;
+                background: #2196f3;
                 color: white;
             }
-
+            
             .btn-primary:hover {
-                background: #0056b3;
+                background: #1976d2;
             }
-
+            
             .btn-warning {
-                background: #ffc107;
-                color: #212529;
-            }
-
-            .btn-warning:hover {
-                background: #e0a800;
-            }
-
-            .btn-secondary {
-                background: #6c757d;
+                background: #ff9800;
                 color: white;
             }
-
+            
+            .btn-warning:hover {
+                background: #f57c00;
+            }
+            
+            .btn-secondary {
+                background: #666;
+                color: white;
+            }
+            
             .btn-secondary:hover {
-                background: #545b62;
+                background: #555;
             }
-
-            .log-container {
-                margin-bottom: 12px;
-            }
-
-            .log-container textarea {
-                width: 100%;
-                font-family: 'Roboto Mono', 'Consolas', monospace;
-                font-size: 12px;
-                background: #1e1e1e;
-                color: #d4d4d4;
-                border: 1px solid #333;
-                border-radius: 4px;
-                padding: 12px;
-                resize: vertical;
-            }
-
-            .log-actions {
-                display: flex;
-                gap: 8px;
-            }
-
-            @keyframes slideIn {
-                from { transform: translateX(100%); }
-                to { transform: translateX(0); }
-            }
-
-            @keyframes slideOut {
-                from { transform: translateX(0); }
-                to { transform: translateX(100%); }
+            
+            .btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
             }
         `;
-    }
-
-    /**
-     * Get CSS styles for the widget
-     */
-    function getWidgetStyles() {
-        return `
-            .polar-cloud-widget {
-                position: fixed;
-                top: 100px;
-                right: 20px;
-                width: 400px;
-                background: white;
-                border: 1px solid #ccc;
-                border-radius: 8px;
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-                z-index: 9999;
-            }
-
-            .widget-header {
-                display: flex;
-                justify-content: space-between;
-                align-items: center;
-                padding: 12px 16px;
-                background: #f8f9fa;
-                border-bottom: 1px solid #dee2e6;
-                border-radius: 8px 8px 0 0;
-            }
-
-            .widget-header h3 {
-                margin: 0;
-                color: #333;
-            }
-
-            .widget-toggle {
-                background: none;
-                border: none;
-                cursor: pointer;
-                padding: 4px;
-                color: #666;
-            }
-
-            .widget-toggle:hover {
-                color: #333;
-            }
-        `;
+        
+        document.head.appendChild(style);
     }
 
     // Initialize when DOM is ready
@@ -850,7 +596,8 @@
         initPolarCloudPlugin();
     }
 
-    // Also try to initialize after a delay in case Mainsail loads later
-    setTimeout(initPolarCloudPlugin, 2000);
+    // Also try after delays to catch late-loading content
+    setTimeout(initPolarCloudPlugin, 3000);
+    setTimeout(initPolarCloudPlugin, 8000);
 
 })(); 
