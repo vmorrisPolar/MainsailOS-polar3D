@@ -1,0 +1,31 @@
+[Unit]
+Description=Polar Cloud Service
+After=network.target moonraker.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+ExecStart=/home/pi/polar-cloud/venv/bin/python /home/pi/polar-cloud/polar_cloud.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+Environment=PYTHONUNBUFFERED=1
+
+# Working directory
+WorkingDirectory=/home/pi/polar-cloud
+
+# Security
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/pi/printer_data
+ReadWritePaths=/home/pi/polar-cloud
+
+[Install]
+WantedBy=multi-user.target 

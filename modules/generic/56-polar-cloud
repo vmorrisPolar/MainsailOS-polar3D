@@ -1,0 +1,91 @@
+#!/bin/bash
+set -xe
+export LC_ALL=C
+
+########################################
+# Functions and Basic Configuration    #
+########################################
+
+# Load common functions and set up cleanup trap
+source /common.sh
+install_cleanup_trap
+
+# Load additional configuration (e.g., BASE_USER)
+source /files/00-config
+
+########################################
+# Configuration                        #
+########################################
+
+# General settings
+readonly DEPS=(python3-pip python3-venv git python3-websockets python3-cryptodome python3-requests python3-pil)
+
+########################################
+# Install System Packages              #
+########################################
+
+apt-get install --yes "${DEPS[@]}"
+
+########################################
+# Create Polar Cloud Service           #
+########################################
+
+pushd "/home/${BASE_USER}" &> /dev/null || exit 1
+
+# Create polar-cloud directory
+sudo -u "${BASE_USER}" mkdir -p polar-cloud
+
+# Create Python virtual environment
+sudo -u "${BASE_USER}" python3 -m venv polar-cloud/venv
+
+# Install Python dependencies
+sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install --upgrade pip
+sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets cryptodome requests pillow
+
+popd &> /dev/null || exit 1
+
+########################################
+# Copy Polar Cloud Files               #
+########################################
+
+# Copy service files
+cp /files/polar-cloud/polar_cloud.py "/home/${BASE_USER}/polar-cloud/"
+cp /files/polar-cloud/polar_cloud.service "/etc/systemd/system/"
+cp /files/polar-cloud/polar_cloud.conf "/home/${BASE_USER}/printer_data/config/"
+
+# Fix ownership
+chown -R "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/polar-cloud"
+chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/printer_data/config/polar_cloud.conf"
+
+########################################
+# Enable Service                       #
+########################################
+
+systemctl_if_exists enable polar_cloud.service
+
+########################################
+# Add Moonraker Update Manager Entry   #
+########################################
+
+# Add update manager entry to moonraker.conf if it doesn't exist
+if ! grep -q "\[update_manager polar_cloud\]" "${MOONRAKER_CONFIG}" 2>/dev/null; then
+    cat >> "${MOONRAKER_CONFIG}" << 'EOF'
+
+[update_manager polar_cloud]
+type: git_repo
+channel: stable
+path: ~/polar-cloud
+origin: https://github.com/mainsail-crew/polar-cloud.git
+primary_branch: main
+managed_services: polar_cloud
+EOF
+fi
+
+########################################
+# Create Web Interface Files           #
+########################################
+
+# Create web interface directory
+sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/mainsail-config/client"
+cp /files/polar-cloud/polar_cloud_ui.js "/home/${BASE_USER}/mainsail-config/client/"
+chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/mainsail-config/client/polar_cloud_ui.js" 
