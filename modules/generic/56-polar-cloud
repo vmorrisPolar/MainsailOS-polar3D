@@ -53,9 +53,13 @@ cp /files/polar-cloud/polar_cloud.py "/home/${BASE_USER}/polar-cloud/"
 cp /files/polar-cloud/polar_cloud.service "/etc/systemd/system/"
 cp /files/polar-cloud/polar_cloud.conf "/home/${BASE_USER}/printer_data/config/"
 
+# Copy Moonraker plugin
+cp /files/polar-cloud/polar_cloud_moonraker.py "/home/${BASE_USER}/printer_data/moonraker/plugins/"
+
 # Fix ownership
 chown -R "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/polar-cloud"
 chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/printer_data/config/polar_cloud.conf"
+chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/printer_data/moonraker/plugins/polar_cloud_moonraker.py"
 
 ########################################
 # Enable Service                       #
@@ -78,6 +82,15 @@ path: ~/polar-cloud
 origin: https://github.com/mainsail-crew/polar-cloud.git
 primary_branch: main
 managed_services: polar_cloud
+EOF
+fi
+
+# Add Moonraker plugin configuration if it doesn't exist
+if ! grep -q "\[polar_cloud\]" "${MOONRAKER_CONFIG}" 2>/dev/null; then
+    cat >> "${MOONRAKER_CONFIG}" << 'EOF'
+
+[polar_cloud]
+# Polar Cloud plugin configuration
 EOF
 fi
 
