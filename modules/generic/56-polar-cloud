@@ -53,7 +53,8 @@ cp /files/polar-cloud/polar_cloud.py "/home/${BASE_USER}/polar-cloud/"
 cp /files/polar-cloud/polar_cloud.service "/etc/systemd/system/"
 cp /files/polar-cloud/polar_cloud.conf "/home/${BASE_USER}/printer_data/config/"
 
-# Copy Moonraker plugin
+# Create moonraker plugins directory and copy plugin
+sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/printer_data/moonraker/plugins"
 cp /files/polar-cloud/polar_cloud_moonraker.py "/home/${BASE_USER}/printer_data/moonraker/plugins/"
 
 # Fix ownership
