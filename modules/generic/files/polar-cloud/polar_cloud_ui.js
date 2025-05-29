@@ -26,49 +26,62 @@
     function initPolarCloudPlugin() {
         console.log('Initializing Polar Cloud Plugin for MACHINE tab');
         
-        // Wait for page to load and try to add to machine tab
-        setTimeout(addToMachineTab, 2000);
+        // Try multiple approaches with different delays
+        setTimeout(() => addToMachineTab('attempt-1'), 1000);
+        setTimeout(() => addToMachineTab('attempt-2'), 3000);
+        setTimeout(() => addToMachineTab('attempt-3'), 5000);
+        setTimeout(() => addToMachineTab('attempt-4'), 8000);
+        setTimeout(() => addToMachineTab('attempt-5'), 12000);
         
-        // Try multiple times in case the page loads slowly
-        setTimeout(addToMachineTab, 5000);
-        setTimeout(addToMachineTab, 10000);
+        // Also try to hook into Vue if available
+        setTimeout(tryVueIntegration, 2000);
+    }
+
+    /**
+     * Try to integrate with Vue app if available
+     */
+    function tryVueIntegration() {
+        if (window.Vue || window.$nuxt || window.$) {
+            console.log('Vue/Nuxt detected, trying Vue integration');
+            setTimeout(() => addToMachineTab('vue-attempt'), 1000);
+        }
     }
 
     /**
      * Add Polar Cloud card to the MACHINE tab
      */
-    function addToMachineTab() {
-        // Look for the machine tab content area
-        const machineTab = document.querySelector('[data-testid="machine-tab"]') ||
-                          document.querySelector('#machine-tab') ||
-                          document.querySelector('.machine-tab') ||
-                          findMachineTabByContent();
+    function addToMachineTab(attempt) {
+        console.log(`Polar Cloud: ${attempt} - Looking for machine tab...`);
         
-        if (!machineTab) {
-            console.log('Machine tab not found, retrying...');
-            return;
-        }
-
         // Check if already added
         if (document.querySelector('#polar-cloud-card')) {
             console.log('Polar Cloud card already exists');
             return;
         }
 
+        // Try multiple strategies to find the machine tab or a suitable container
+        const machineTab = findMachineContainer();
+        
+        if (!machineTab) {
+            console.log(`${attempt}: Machine tab not found, will retry...`);
+            return;
+        }
+
+        console.log(`${attempt}: Found container:`, machineTab);
+
         // Create the Polar Cloud card
         const polarCloudCard = createPolarCloudCard();
         
-        // Find a good place to insert it (after system loads or update manager)
-        const systemLoads = machineTab.querySelector('[data-testid="system-loads"]') ||
-                           machineTab.querySelector('.system-loads') ||
-                           machineTab.querySelector('h3');
+        // Try to find a good insertion point
+        const insertionPoint = findInsertionPoint(machineTab);
         
-        if (systemLoads && systemLoads.parentNode) {
-            // Insert after system loads or similar element
-            systemLoads.parentNode.insertBefore(polarCloudCard, systemLoads.nextSibling);
+        if (insertionPoint && insertionPoint.parentNode) {
+            insertionPoint.parentNode.insertBefore(polarCloudCard, insertionPoint.nextSibling);
+            console.log(`${attempt}: Inserted after element:`, insertionPoint);
         } else {
-            // Fallback: append to machine tab
+            // Fallback: append to the container
             machineTab.appendChild(polarCloudCard);
+            console.log(`${attempt}: Appended to container`);
         }
 
         // Bind event handlers
@@ -77,42 +90,148 @@
         // Load initial status
         loadPolarCloudStatus();
         
-        console.log('Polar Cloud card added to MACHINE tab');
+        console.log(`${attempt}: Polar Cloud card added successfully!`);
     }
 
     /**
-     * Find machine tab by looking for characteristic content
+     * Find machine container using multiple strategies
      */
-    function findMachineTabByContent() {
-        // Look for elements that are typically in the machine tab
+    function findMachineContainer() {
+        // Strategy 1: Look for specific data attributes
+        let container = document.querySelector('[data-testid="machine-tab"]') ||
+                       document.querySelector('#machine-tab') ||
+                       document.querySelector('.machine-tab');
+        
+        if (container) {
+            console.log('Found container via data attributes');
+            return container;
+        }
+
+        // Strategy 2: Look for characteristic content
+        container = findByCharacteristicContent();
+        if (container) {
+            console.log('Found container via characteristic content');
+            return container;
+        }
+
+        // Strategy 3: Look for Vue components
+        container = findVueContainer();
+        if (container) {
+            console.log('Found container via Vue components');
+            return container;
+        }
+
+        // Strategy 4: Look for any main content area
+        container = document.querySelector('main') ||
+                   document.querySelector('.v-main') ||
+                   document.querySelector('#app') ||
+                   document.querySelector('.application');
+        
+        if (container) {
+            console.log('Found fallback container');
+            return container;
+        }
+
+        return null;
+    }
+
+    /**
+     * Find container by looking for characteristic content
+     */
+    function findByCharacteristicContent() {
         const indicators = [
             'System Loads',
             'Update Manager',
             'system-loads',
-            'update-manager'
+            'update-manager',
+            'Machine',
+            'Host',
+            'Temperature'
         ];
         
         for (const indicator of indicators) {
-            const element = document.querySelector(`[data-testid*="${indicator}"]`) ||
-                           document.querySelector(`[class*="${indicator}"]`) ||
-                           Array.from(document.querySelectorAll('*')).find(el => 
-                               el.textContent && el.textContent.includes(indicator)
-                           );
+            // Try different selector strategies
+            let element = document.querySelector(`[data-testid*="${indicator}"]`) ||
+                         document.querySelector(`[class*="${indicator}"]`) ||
+                         document.querySelector(`[id*="${indicator}"]`);
+            
+            if (!element) {
+                // Search by text content
+                const elements = Array.from(document.querySelectorAll('*'));
+                element = elements.find(el => 
+                    el.textContent && 
+                    el.textContent.toLowerCase().includes(indicator.toLowerCase()) &&
+                    el.children.length < 10 // Avoid selecting large containers
+                );
+            }
             
             if (element) {
-                // Find the parent container that looks like a tab content area
+                // Find a suitable parent container
                 let parent = element.parentNode;
-                while (parent && parent !== document.body) {
+                let attempts = 0;
+                while (parent && parent !== document.body && attempts < 5) {
                     if (parent.classList.contains('tab-content') ||
                         parent.classList.contains('v-tab-content') ||
                         parent.classList.contains('machine') ||
-                        parent.id.includes('machine')) {
+                        parent.classList.contains('v-main') ||
+                        parent.id.includes('machine') ||
+                        parent.id.includes('main')) {
                         return parent;
                     }
                     parent = parent.parentNode;
+                    attempts++;
                 }
-                // Fallback to a reasonable parent
+                // Return a reasonable parent if we found the element
                 return element.parentNode?.parentNode || element.parentNode;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Find Vue container
+     */
+    function findVueContainer() {
+        // Look for Vue-specific classes
+        const vueSelectors = [
+            '.v-application',
+            '.v-main',
+            '.v-content',
+            '[data-app]',
+            '#app'
+        ];
+        
+        for (const selector of vueSelectors) {
+            const element = document.querySelector(selector);
+            if (element) {
+                return element;
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * Find a good insertion point within the container
+     */
+    function findInsertionPoint(container) {
+        // Look for existing cards or sections to insert after
+        const candidates = [
+            container.querySelector('[class*="system"]'),
+            container.querySelector('[class*="load"]'),
+            container.querySelector('[class*="update"]'),
+            container.querySelector('[class*="card"]'),
+            container.querySelector('h1'),
+            container.querySelector('h2'),
+            container.querySelector('h3'),
+            container.querySelector('.v-card'),
+            container.querySelector('section')
+        ];
+        
+        for (const candidate of candidates) {
+            if (candidate) {
+                return candidate;
             }
         }
         
@@ -597,7 +716,123 @@
     }
 
     // Also try after delays to catch late-loading content
-    setTimeout(initPolarCloudPlugin, 3000);
-    setTimeout(initPolarCloudPlugin, 8000);
+    setTimeout(initPolarCloudPlugin, 15000);
+    setTimeout(initPolarCloudPlugin, 30000);
+
+    // Add a fallback floating button if nothing else works
+    setTimeout(addFloatingButton, 20000);
+
+    /**
+     * Add a floating button as a last resort
+     */
+    function addFloatingButton() {
+        if (document.querySelector('#polar-cloud-card') || document.querySelector('#polar-cloud-float')) {
+            return; // Already added
+        }
+
+        console.log('Adding floating Polar Cloud button as fallback');
+        
+        const floatingButton = document.createElement('div');
+        floatingButton.id = 'polar-cloud-float';
+        floatingButton.innerHTML = `
+            <button id="polar-float-btn" style="
+                position: fixed;
+                bottom: 20px;
+                right: 20px;
+                z-index: 9999;
+                background: #2196f3;
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 60px;
+                height: 60px;
+                cursor: pointer;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 24px;
+            ">☁️</button>
+        `;
+        
+        document.body.appendChild(floatingButton);
+        
+        document.getElementById('polar-float-btn').addEventListener('click', () => {
+            // Create a modal with the Polar Cloud interface
+            showPolarCloudModal();
+        });
+    }
+
+    /**
+     * Show Polar Cloud in a modal
+     */
+    function showPolarCloudModal() {
+        if (document.querySelector('#polar-cloud-modal')) {
+            return; // Already open
+        }
+
+        const modal = document.createElement('div');
+        modal.id = 'polar-cloud-modal';
+        modal.innerHTML = `
+            <div style="
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(0,0,0,0.7);
+                z-index: 10000;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            ">
+                <div style="
+                    background: #1e1e1e;
+                    border-radius: 8px;
+                    padding: 20px;
+                    max-width: 500px;
+                    width: 90%;
+                    max-height: 80%;
+                    overflow-y: auto;
+                ">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2 style="color: white; margin: 0;">Polar Cloud Connection</h2>
+                        <button id="close-modal" style="
+                            background: none;
+                            border: none;
+                            color: white;
+                            font-size: 24px;
+                            cursor: pointer;
+                        ">×</button>
+                    </div>
+                    <div id="modal-content"></div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        
+        // Move the card content to the modal
+        const cardContent = createPolarCloudCard();
+        cardContent.style.background = 'transparent';
+        cardContent.style.border = 'none';
+        document.getElementById('modal-content').appendChild(cardContent);
+        
+        // Bind events
+        bindEventHandlers();
+        loadPolarCloudStatus();
+        
+        // Close modal handler
+        document.getElementById('close-modal').addEventListener('click', () => {
+            document.body.removeChild(modal);
+        });
+        
+        // Close on backdrop click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                document.body.removeChild(modal);
+            }
+        });
+    }
 
 })(); 

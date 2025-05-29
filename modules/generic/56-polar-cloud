@@ -99,7 +99,12 @@ fi
 # Create Web Interface Files           #
 ########################################
 
-# Create web interface directory
-sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/mainsail-config/client"
-cp /files/polar-cloud/polar_cloud_ui.js "/home/${BASE_USER}/mainsail-config/client/"
-chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/mainsail-config/client/polar_cloud_ui.js" 
+# Copy UI file to Mainsail directory
+cp /files/polar-cloud/polar_cloud_ui.js "/home/${BASE_USER}/mainsail/"
+chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/mainsail/polar_cloud_ui.js"
+
+# Add script tag to Mainsail's index.html to load our plugin
+if [ -f "/home/${BASE_USER}/mainsail/index.html" ]; then
+    # Insert our script tag before the closing </body> tag
+    sed -i 's|</body>|<script src="polar_cloud_ui.js"></script>\n</body>|' "/home/${BASE_USER}/mainsail/index.html"
+fi 
