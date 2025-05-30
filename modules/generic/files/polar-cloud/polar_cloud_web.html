@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Polar Cloud Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%);
+            color: #ffffff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            background: linear-gradient(45deg, #4CAF50, #2196F3);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .header p {
+            color: #cccccc;
+            font-size: 1.1rem;
+        }
+
+        .status-section {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 30px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+        }
+
+        .status-label {
+            color: #cccccc;
+            font-weight: 500;
+        }
+
+        .status-value {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .status-dot.active {
+            background: #4CAF50;
+            box-shadow: 0 0 10px rgba(76, 175, 80, 0.6);
+        }
+
+        .status-dot.warning {
+            background: #FF9800;
+            box-shadow: 0 0 10px rgba(255, 152, 0, 0.6);
+        }
+
+        .status-dot.inactive {
+            background: #666666;
+        }
+
+        .form-section {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #cccccc;
+            font-weight: 500;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #ffffff;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.3);
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        input::placeholder {
+            color: #aaaaaa;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .btn-primary {
+            background: linear-gradient(45deg, #2196F3, #21CBF3);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(33, 150, 243, 0.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(45deg, #f44336, #ff6b6b);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(244, 67, 54, 0.4);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+            color: #cccccc;
+        }
+
+        .loading.show {
+            display: block;
+        }
+
+        .message {
+            padding: 15px;
+            border-radius: 6px;
+            margin: 15px 0;
+            display: none;
+        }
+
+        .message.success {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            color: #4CAF50;
+        }
+
+        .message.error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid rgba(244, 67, 54, 0.5);
+            color: #f44336;
+        }
+
+        .message.show {
+            display: block;
+        }
+
+        .navigation {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .navigation a {
+            color: #2196F3;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .navigation a:hover {
+            text-decoration: underline;
+        }
+
+        @media (max-width: 600px) {
+            .container {
+                padding: 20px;
+            }
+
+            .header h1 {
+                font-size: 2rem;
+            }
+
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="navigation">
+            <a href="/">← Back to Mainsail</a>
+        </div>
+
+        <div class="header">
+            <h1>☁️ Polar Cloud</h1>
+            <p>Connect your 3D printer to Polar Cloud for remote monitoring</p>
+        </div>
+
+        <div class="status-section">
+            <h3 style="margin-bottom: 15px; color: #ffffff;">Connection Status</h3>
+            <div class="status-grid">
+                <div class="status-item">
+                    <span class="status-label">Service Status:</span>
+                    <span class="status-value">
+                        <span class="status-dot inactive" id="service-dot"></span>
+                        <span id="service-status">Loading...</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Registration:</span>
+                    <span class="status-value">
+                        <span class="status-dot inactive" id="registration-dot"></span>
+                        <span id="registration-status">Loading...</span>
+                    </span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Username:</span>
+                    <span class="status-value" id="username-display">Loading...</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Serial Number:</span>
+                    <span class="status-value" id="serial-display">Loading...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="form-section">
+            <h3 style="margin-bottom: 20px; color: #ffffff;">Configuration</h3>
+            
+            <div class="form-group">
+                <div class="form-row">
+                    <div>
+                        <label for="username">Email/Username</label>
+                        <input type="email" id="username" placeholder="your@email.com" required>
+                    </div>
+                    <div>
+                        <label for="pin">PIN</label>
+                        <input type="password" id="pin" placeholder="Your Polar Cloud PIN" required>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div>
+                        <label for="machine-type">Machine Type</label>
+                        <select id="machine-type">
+                            <option value="Cartesian">Cartesian</option>
+                            <option value="Delta">Delta</option>
+                            <option value="CoreXY">CoreXY</option>
+                            <option value="Polar">Polar</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="printer-type">Printer Type</label>
+                        <select id="printer-type">
+                            <option value="">Loading printer types...</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="button-group">
+                <button class="btn btn-primary" id="connect-btn">
+                    <span>🔗</span> Connect to Polar Cloud
+                </button>
+                <button class="btn btn-danger" id="disconnect-btn" style="display: none;">
+                    <span>🔌</span> Disconnect
+                </button>
+                <button class="btn btn-secondary" id="refresh-btn">
+                    <span>🔄</span> Refresh Status
+                </button>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <p>⏳ Processing...</p>
+        </div>
+
+        <div class="message" id="message"></div>
+    </div>
+
+    <script>
+        const API_BASE = '/server/polar_cloud';
+        
+        // State
+        let currentStatus = {};
+
+        // DOM Elements
+        const serviceDot = document.getElementById('service-dot');
+        const serviceStatus = document.getElementById('service-status');
+        const registrationDot = document.getElementById('registration-dot');
+        const registrationStatus = document.getElementById('registration-status');
+        const usernameDisplay = document.getElementById('username-display');
+        const serialDisplay = document.getElementById('serial-display');
+        
+        const usernameInput = document.getElementById('username');
+        const pinInput = document.getElementById('pin');
+        const machineTypeSelect = document.getElementById('machine-type');
+        const printerTypeSelect = document.getElementById('printer-type');
+        
+        const connectBtn = document.getElementById('connect-btn');
+        const disconnectBtn = document.getElementById('disconnect-btn');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const loading = document.getElementById('loading');
+        const message = document.getElementById('message');
+
+        // Event Listeners
+        connectBtn.addEventListener('click', handleConnect);
+        disconnectBtn.addEventListener('click', handleDisconnect);
+        refreshBtn.addEventListener('click', loadStatus);
+
+        // Initialize
+        loadStatus();
+        loadPrinterTypes();
+
+        async function loadStatus() {
+            try {
+                showLoading(true);
+                const response = await fetch(`${API_BASE}/status`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                currentStatus = data;
+                updateUI();
+                
+            } catch (error) {
+                console.error('Error loading status:', error);
+                showMessage('Failed to load status: ' + error.message, 'error');
+                
+                // Set error state
+                serviceStatus.textContent = 'Error';
+                registrationStatus.textContent = 'Error';
+                usernameDisplay.textContent = 'Error';
+                serialDisplay.textContent = 'Error';
+                
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function updateUI() {
+            // Update status display
+            const isActive = currentStatus.service_status === 'active';
+            const isRegistered = currentStatus.registered;
+            
+            // Service status
+            serviceDot.className = `status-dot ${isActive ? 'active' : 'inactive'}`;
+            serviceStatus.textContent = currentStatus.service_status || 'inactive';
+            
+            // Registration status
+            registrationDot.className = `status-dot ${isRegistered ? 'active' : (isActive ? 'warning' : 'inactive')}`;
+            registrationStatus.textContent = isRegistered ? 'Registered' : 'Not Registered';
+            
+            // User info
+            usernameDisplay.textContent = currentStatus.username || 'Not set';
+            serialDisplay.textContent = currentStatus.serial_number || 'Not registered';
+            
+            // Form
+            if (currentStatus.username) {
+                usernameInput.value = currentStatus.username;
+            }
+            if (currentStatus.machine_type) {
+                machineTypeSelect.value = currentStatus.machine_type;
+            }
+            if (currentStatus.printer_type) {
+                printerTypeSelect.value = currentStatus.printer_type;
+            }
+            
+            // Buttons
+            if (isRegistered) {
+                connectBtn.style.display = 'none';
+                disconnectBtn.style.display = 'inline-flex';
+            } else {
+                connectBtn.style.display = 'inline-flex';
+                disconnectBtn.style.display = 'none';
+            }
+        }
+
+        async function handleConnect() {
+            const username = usernameInput.value.trim();
+            const pin = pinInput.value.trim();
+            const machineType = machineTypeSelect.value;
+            const printerType = printerTypeSelect.value;
+            
+            if (!username || !pin) {
+                showMessage('Please enter both username and PIN', 'error');
+                return;
+            }
+            
+            try {
+                showLoading(true);
+                
+                const response = await fetch(`${API_BASE}/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        username: username,
+                        pin: pin,
+                        machine_type: machineType,
+                        printer_type: printerType
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('Successfully connected to Polar Cloud!', 'success');
+                    setTimeout(loadStatus, 2000);
+                } else {
+                    showMessage('Connection failed: ' + (result.error || 'Unknown error'), 'error');
+                }
+                
+            } catch (error) {
+                console.error('Error connecting:', error);
+                showMessage('Connection failed: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function handleDisconnect() {
+            if (!confirm('Are you sure you want to disconnect from Polar Cloud?')) {
+                return;
+            }
+            
+            try {
+                showLoading(true);
+                
+                const response = await fetch(`${API_BASE}/unregister`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showMessage('Successfully disconnected from Polar Cloud', 'success');
+                    loadStatus();
+                } else {
+                    showMessage('Disconnect failed: ' + (result.error || 'Unknown error'), 'error');
+                }
+                
+            } catch (error) {
+                console.error('Error disconnecting:', error);
+                showMessage('Disconnect failed: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function showLoading(show) {
+            loading.classList.toggle('show', show);
+            connectBtn.disabled = show;
+            disconnectBtn.disabled = show;
+            refreshBtn.disabled = show;
+        }
+
+        function showMessage(text, type) {
+            message.textContent = text;
+            message.className = `message ${type} show`;
+            
+            setTimeout(() => {
+                message.classList.remove('show');
+            }, 5000);
+        }
+
+        async function loadPrinterTypes() {
+            try {
+                const response = await fetch(`${API_BASE}/printer-types`);
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                const printerTypes = data.printer_types;
+                populatePrinterTypeSelect(printerTypes);
+            } catch (error) {
+                console.error('Error loading printer types:', error);
+                showMessage('Failed to load printer types: ' + error.message, 'error');
+            }
+        }
+
+        function populatePrinterTypeSelect(types) {
+            printerTypeSelect.innerHTML = '';
+            types.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                printerTypeSelect.appendChild(option);
+            });
+        }
+    </script>
+</body>
+</html> 

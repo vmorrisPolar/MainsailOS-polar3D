@@ -9,6 +9,8 @@ import configparser
 import os
 import asyncio
 import subprocess
+import aiohttp
+import json
 from tornado.web import RequestHandler
 
 class PolarCloudPlugin:
@@ -35,6 +37,10 @@ class PolarCloudPlugin:
             "/server/polar_cloud/config", ["GET", "POST"],
             self._handle_config_request
         )
+        self.server.register_endpoint(
+            "/server/polar_cloud/printer-types", ["GET"],
+            self._handle_printer_types_request
+        )
         
         logging.info("Polar Cloud plugin loaded")
     
@@ -45,7 +51,7 @@ class PolarCloudPlugin:
         else:
             # Create default config
             self.config['polar_cloud'] = {
-                'server_url': 'wss://printer4.polar3d.com',
+                'server_url': 'wss://status-dev.polar3d.com',
                 'username': '',
                 'pin': '',
                 'machine_type': 'Cartesian',
@@ -144,7 +150,7 @@ class PolarCloudPlugin:
             if web_request.get_method() == "GET":
                 # Return current configuration
                 return {
-                    "server_url": self.config.get('polar_cloud', 'server_url', fallback='wss://printer4.polar3d.com'),
+                    "server_url": self.config.get('polar_cloud', 'server_url', fallback='wss://status-dev.polar3d.com'),
                     "username": self.config.get('polar_cloud', 'username', fallback=''),
                     "machine_type": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
                     "printer_type": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
@@ -175,6 +181,36 @@ class PolarCloudPlugin:
             logging.error(f"Error handling config request: {e}")
             return {"error": str(e)}
 
+    async def _handle_printer_types_request(self, web_request):
+        """Handle printer types requests"""
+        try:
+            # Fetch printer types from Polar Cloud API
+            async with aiohttp.ClientSession() as session:
+                async with session.get('https://polar3d.com/api/v1/printer_makes?filter=') as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        # Extract printer type names from the API response
+                        printer_types = []
+                        if isinstance(data, list):
+                            for item in data:
+                                if isinstance(item, dict) and 'name' in item:
+                                    printer_types.append(item['name'])
+                                elif isinstance(item, str):
+                                    printer_types.append(item)
+                        
+                        # If no printer types found, provide defaults
+                        if not printer_types:
+                            printer_types = ['Cartesian', 'Delta', 'CoreXY', 'Polar']
+                        
+                        return {"printer_types": printer_types}
+                    else:
+                        logging.warning(f"Failed to fetch printer types from Polar Cloud API: {response.status}")
+                        # Return default types if API fails
+                        return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar']}
+        except Exception as e:
+            logging.error(f"Error fetching printer types: {e}")
+            # Return default types if there's an error
+            return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar']}
 
 def load_component(config):
     return PolarCloudPlugin(config) 

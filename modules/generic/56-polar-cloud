@@ -40,7 +40,7 @@ sudo -u "${BASE_USER}" python3 -m venv polar-cloud/venv
 
 # Install Python dependencies
 sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install --upgrade pip
-sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets pycryptodome requests pillow
+sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets pycryptodome requests pillow aiohttp
 
 popd &> /dev/null || exit 1
 
@@ -56,6 +56,10 @@ cp /files/polar-cloud/polar_cloud.conf "/home/${BASE_USER}/printer_data/config/"
 # Create moonraker plugins directory and copy plugin
 sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/printer_data/moonraker/plugins"
 cp /files/polar-cloud/polar_cloud_moonraker.py "/home/${BASE_USER}/printer_data/moonraker/plugins/"
+
+# Copy simple web interface
+sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/polar-cloud/web"
+cp /files/polar-cloud/polar_cloud_web.html "/home/${BASE_USER}/polar-cloud/web/index.html"
 
 # Fix ownership
 chown -R "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/polar-cloud"
@@ -96,15 +100,22 @@ EOF
 fi
 
 ########################################
-# Create Web Interface Files           #
+# Add Nginx Configuration              #
 ########################################
 
-# Copy UI file to Mainsail directory
-cp /files/polar-cloud/polar_cloud_ui.js "/home/${BASE_USER}/mainsail/"
-chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/mainsail/polar_cloud_ui.js"
-
-# Add script tag to Mainsail's index.html to load our plugin
-if [ -f "/home/${BASE_USER}/mainsail/index.html" ]; then
-    # Insert our script tag before the closing </body> tag
-    sed -i 's|</body>|<script src="polar_cloud_ui.js"></script>\n</body>|' "/home/${BASE_USER}/mainsail/index.html"
+# Add Polar Cloud web interface to nginx config
+if [ -f "/etc/nginx/sites-available/mainsail" ]; then
+    # Check if polar cloud location already exists
+    if ! grep -q "location /polar-cloud" "/etc/nginx/sites-available/mainsail"; then
+        # Add polar cloud location before the last closing brace
+        sed -i '/^}$/i\
+\
+    location /polar-cloud/ {\
+        alias /home/pi/polar-cloud/web/;\
+        try_files $uri $uri/ /index.html;\
+    }' "/etc/nginx/sites-available/mainsail"
+        
+        # Restart nginx to apply changes
+        systemctl restart nginx || true
+    fi
 fi 
