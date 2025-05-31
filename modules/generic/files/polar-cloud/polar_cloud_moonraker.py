@@ -184,33 +184,58 @@ class PolarCloudPlugin:
     async def _handle_printer_types_request(self, web_request):
         """Handle printer types requests"""
         try:
-            # Fetch printer types from Polar Cloud API
+            # Get machine type from query parameters for filtering
+            args = web_request.get_args()
+            machine_type = args.get('machine_type', 'cartesian').lower()
+            
+            # Fetch printer types from Polar Cloud API with machine type filter
             async with aiohttp.ClientSession() as session:
-                async with session.get('https://polar3d.com/api/v1/printer_makes?filter=') as response:
+                api_url = f'https://polar3d.com/api/v1/printer_makes?filter={machine_type}'
+                async with session.get(api_url) as response:
                     if response.status == 200:
                         data = await response.json()
                         # Extract printer type names from the API response
                         printer_types = []
-                        if isinstance(data, list):
+                        
+                        # The API returns {"printerMakes": [...]} structure
+                        if isinstance(data, dict) and 'printerMakes' in data:
+                            printer_makes = data['printerMakes']
+                            if isinstance(printer_makes, list):
+                                printer_types = printer_makes
+                        elif isinstance(data, list):
+                            # Fallback for direct array response
                             for item in data:
                                 if isinstance(item, dict) and 'name' in item:
                                     printer_types.append(item['name'])
                                 elif isinstance(item, str):
                                     printer_types.append(item)
                         
-                        # If no printer types found, provide defaults
+                        # Add "Other/Custom" option
+                        if printer_types:
+                            printer_types.append("Other/Custom")
+                        
+                        # If no printer types found, provide machine-type specific defaults
                         if not printer_types:
-                            printer_types = ['Cartesian', 'Delta', 'CoreXY', 'Polar']
+                            if machine_type.lower() == 'cartesian':
+                                printer_types = ['Cartesian', 'Ender 3', 'Prusa MK3S', 'Other/Custom']
+                            elif machine_type.lower() == 'delta':
+                                printer_types = ['Delta', 'Rostock Max', 'FLSUN Q5', 'Other/Custom']
+                            elif machine_type.lower() == 'corexy':
+                                printer_types = ['CoreXY', 'Voron', 'HyperCube', 'Other/Custom']
+                            elif machine_type.lower() == 'polar':
+                                printer_types = ['Polar', 'Other/Custom']
+                            else:
+                                printer_types = ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom']
                         
                         return {"printer_types": printer_types}
                     else:
                         logging.warning(f"Failed to fetch printer types from Polar Cloud API: {response.status}")
                         # Return default types if API fails
-                        return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar']}
+                        return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom']}
         except Exception as e:
             logging.error(f"Error fetching printer types: {e}")
             # Return default types if there's an error
-            return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar']}
+            return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom']}
 
 def load_component(config):
     return PolarCloudPlugin(config) 

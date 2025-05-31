@@ -110,9 +110,14 @@ if [ -f "/etc/nginx/sites-available/mainsail" ]; then
         # Add polar cloud location before the last closing brace
         sed -i '/^}$/i\
 \
+    # Redirect /polar-cloud to /polar-cloud/ for user-friendliness\
+    location = /polar-cloud {\
+        return 301 $scheme://$host/polar-cloud/;\
+    }\
+\
     location /polar-cloud/ {\
         alias /home/pi/polar-cloud/web/;\
-        try_files $uri $uri/ /index.html;\
+        try_files $uri $uri/ /polar-cloud/index.html;\
     }' "/etc/nginx/sites-available/mainsail"
         
         # Restart nginx to apply changes

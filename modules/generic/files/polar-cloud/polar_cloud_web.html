@@ -345,7 +345,7 @@
                     <div>
                         <label for="printer-type">Printer Type</label>
                         <select id="printer-type">
-                            <option value="">Loading printer types...</option>
+                            <option value="">Select printer type...</option>
                         </select>
                     </div>
                 </div>
@@ -400,6 +400,7 @@
         connectBtn.addEventListener('click', handleConnect);
         disconnectBtn.addEventListener('click', handleDisconnect);
         refreshBtn.addEventListener('click', loadStatus);
+        machineTypeSelect.addEventListener('change', handleMachineTypeChange);
 
         // Initialize
         loadStatus();
@@ -482,6 +483,11 @@
                 return;
             }
             
+            if (!printerType) {
+                showMessage('Please select a printer type', 'error');
+                return;
+            }
+            
             try {
                 showLoading(true);
                 
@@ -504,7 +510,8 @@
                     showMessage('Successfully connected to Polar Cloud!', 'success');
                     setTimeout(loadStatus, 2000);
                 } else {
-                    showMessage('Connection failed: ' + (result.error || 'Unknown error'), 'error');
+                    const errorMsg = typeof result.error === 'object' ? JSON.stringify(result.error) : (result.error || 'Unknown error');
+                    showMessage('Connection failed: ' + errorMsg, 'error');
                 }
                 
             } catch (error) {
@@ -562,7 +569,8 @@
 
         async function loadPrinterTypes() {
             try {
-                const response = await fetch(`${API_BASE}/printer-types`);
+                const machineType = machineTypeSelect.value || 'Cartesian';
+                const response = await fetch(`${API_BASE}/printer-types?machine_type=${encodeURIComponent(machineType)}`);
                 const data = await response.json();
                 
                 if (data.error) {
@@ -573,18 +581,56 @@
                 populatePrinterTypeSelect(printerTypes);
             } catch (error) {
                 console.error('Error loading printer types:', error);
-                showMessage('Failed to load printer types: ' + error.message, 'error');
+                showMessage('Failed to load printer types, using defaults: ' + error.message, 'error');
+                // Provide fallback printer types based on machine type
+                const machineType = machineTypeSelect.value || 'Cartesian';
+                let fallbackTypes;
+                
+                switch (machineType.toLowerCase()) {
+                    case 'cartesian':
+                        fallbackTypes = ['Cartesian', 'Ender 3', 'Prusa MK3S', 'Other/Custom'];
+                        break;
+                    case 'delta':
+                        fallbackTypes = ['Delta', 'Rostock Max', 'FLSUN Q5', 'Other/Custom'];
+                        break;
+                    case 'corexy':
+                        fallbackTypes = ['CoreXY', 'Voron', 'HyperCube', 'Other/Custom'];
+                        break;
+                    case 'polar':
+                        fallbackTypes = ['Polar', 'Other/Custom'];
+                        break;
+                    default:
+                        fallbackTypes = ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom'];
+                }
+                
+                populatePrinterTypeSelect(fallbackTypes);
             }
         }
 
         function populatePrinterTypeSelect(types) {
             printerTypeSelect.innerHTML = '';
+            
+            // Add a default "Select printer type" option
+            const defaultOption = document.createElement('option');
+            defaultOption.value = '';
+            defaultOption.textContent = 'Select printer type...';
+            printerTypeSelect.appendChild(defaultOption);
+            
             types.forEach(type => {
                 const option = document.createElement('option');
                 option.value = type;
                 option.textContent = type;
                 printerTypeSelect.appendChild(option);
             });
+            
+            // If there's a current printer type, select it
+            if (currentStatus && currentStatus.printer_type) {
+                printerTypeSelect.value = currentStatus.printer_type;
+            }
+        }
+
+        function handleMachineTypeChange() {
+            loadPrinterTypes();
         }
     </script>
 </body>
