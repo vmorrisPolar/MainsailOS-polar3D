@@ -336,10 +336,10 @@
                     <div>
                         <label for="machine-type">Machine Type</label>
                         <select id="machine-type">
+                            <option value="">Select machine type...</option>
                             <option value="Cartesian">Cartesian</option>
                             <option value="Delta">Delta</option>
-                            <option value="CoreXY">CoreXY</option>
-                            <option value="Polar">Polar</option>
+                            <option value="Belt">Belt</option>
                         </select>
                     </div>
                     <div>
@@ -457,6 +457,8 @@
             }
             if (currentStatus.machine_type) {
                 machineTypeSelect.value = currentStatus.machine_type;
+                // Load printer types for the current machine type
+                loadPrinterTypes();
             }
             if (currentStatus.printer_type) {
                 printerTypeSelect.value = currentStatus.printer_type;
@@ -480,6 +482,11 @@
             
             if (!username || !pin) {
                 showMessage('Please enter both username and PIN', 'error');
+                return;
+            }
+            
+            if (!machineType) {
+                showMessage('Please select a machine type', 'error');
                 return;
             }
             
@@ -569,7 +576,13 @@
 
         async function loadPrinterTypes() {
             try {
-                const machineType = machineTypeSelect.value || 'Cartesian';
+                const machineType = machineTypeSelect.value;
+                if (!machineType) {
+                    // Clear printer types if no machine type selected
+                    printerTypeSelect.innerHTML = '<option value="">Select machine type first...</option>';
+                    return;
+                }
+                
                 const response = await fetch(`${API_BASE}/printer-types?machine_type=${encodeURIComponent(machineType)}`);
                 const data = await response.json();
                 
@@ -593,14 +606,11 @@
                     case 'delta':
                         fallbackTypes = ['Delta', 'Rostock Max', 'FLSUN Q5', 'Other/Custom'];
                         break;
-                    case 'corexy':
-                        fallbackTypes = ['CoreXY', 'Voron', 'HyperCube', 'Other/Custom'];
-                        break;
-                    case 'polar':
-                        fallbackTypes = ['Polar', 'Other/Custom'];
+                    case 'belt':
+                        fallbackTypes = ['Belt', 'CR-30 3DPrintMill', 'iFactory One', 'Other/Custom'];
                         break;
                     default:
-                        fallbackTypes = ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom'];
+                        fallbackTypes = ['Cartesian', 'Delta', 'Belt', 'Other/Custom'];
                 }
                 
                 populatePrinterTypeSelect(fallbackTypes);

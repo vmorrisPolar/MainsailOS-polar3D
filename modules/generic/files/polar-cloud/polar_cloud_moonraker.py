@@ -220,22 +220,20 @@ class PolarCloudPlugin:
                                 printer_types = ['Cartesian', 'Ender 3', 'Prusa MK3S', 'Other/Custom']
                             elif machine_type.lower() == 'delta':
                                 printer_types = ['Delta', 'Rostock Max', 'FLSUN Q5', 'Other/Custom']
-                            elif machine_type.lower() == 'corexy':
-                                printer_types = ['CoreXY', 'Voron', 'HyperCube', 'Other/Custom']
-                            elif machine_type.lower() == 'polar':
-                                printer_types = ['Polar', 'Other/Custom']
+                            elif machine_type.lower() == 'belt':
+                                printer_types = ['Belt', 'CR-30 3DPrintMill', 'iFactory One', 'Other/Custom']
                             else:
-                                printer_types = ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom']
+                                printer_types = ['Cartesian', 'Delta', 'Belt', 'Other/Custom']
                         
                         return {"printer_types": printer_types}
                     else:
                         logging.warning(f"Failed to fetch printer types from Polar Cloud API: {response.status}")
                         # Return default types if API fails
-                        return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom']}
+                        return {"printer_types": ['Cartesian', 'Delta', 'Belt', 'Other/Custom']}
         except Exception as e:
             logging.error(f"Error fetching printer types: {e}")
             # Return default types if there's an error
-            return {"printer_types": ['Cartesian', 'Delta', 'CoreXY', 'Polar', 'Other/Custom']}
+            return {"printer_types": ['Cartesian', 'Delta', 'Belt', 'Other/Custom']}
 
 def load_component(config):
     return PolarCloudPlugin(config) 
