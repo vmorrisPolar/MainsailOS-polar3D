@@ -20,7 +20,7 @@ def load_config():
     else:
         # Create default config
         config['polar_cloud'] = {
-            'server_url': 'wss://printer4.polar3d.com',
+            'server_url': 'https://printer4.polar3d.com',
             'username': '',
             'pin': '',
             'machine_type': 'Cartesian',

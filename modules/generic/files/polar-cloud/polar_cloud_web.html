@@ -401,10 +401,44 @@
         disconnectBtn.addEventListener('click', handleDisconnect);
         refreshBtn.addEventListener('click', loadStatus);
         machineTypeSelect.addEventListener('change', handleMachineTypeChange);
+        
+        // Save form values to localStorage when they change
+        usernameInput.addEventListener('input', saveFormToStorage);
+        pinInput.addEventListener('input', saveFormToStorage);
+        machineTypeSelect.addEventListener('change', saveFormToStorage);
+        printerTypeSelect.addEventListener('change', saveFormToStorage);
 
         // Initialize
+        loadFormFromStorage(); // Load saved form values first
         loadStatus();
         loadPrinterTypes();
+        
+        function saveFormToStorage() {
+            const formData = {
+                username: usernameInput.value,
+                pin: pinInput.value,
+                machine_type: machineTypeSelect.value,
+                printer_type: printerTypeSelect.value
+            };
+            localStorage.setItem('polar_cloud_form', JSON.stringify(formData));
+        }
+        
+        function loadFormFromStorage() {
+            try {
+                const savedData = localStorage.getItem('polar_cloud_form');
+                if (savedData) {
+                    const formData = JSON.parse(savedData);
+                    
+                    // Restore form values from localStorage
+                    if (formData.username) usernameInput.value = formData.username;
+                    if (formData.pin) pinInput.value = formData.pin;
+                    if (formData.machine_type) machineTypeSelect.value = formData.machine_type;
+                    if (formData.printer_type) printerTypeSelect.value = formData.printer_type;
+                }
+            } catch (error) {
+                console.error('Error loading form from storage:', error);
+            }
+        }
 
         async function loadStatus() {
             try {
@@ -451,18 +485,23 @@
             usernameDisplay.textContent = currentStatus.username || 'Not set';
             serialDisplay.textContent = currentStatus.serial_number || 'Not registered';
             
-            // Form
-            if (currentStatus.username) {
+            // Form - prefer server values over localStorage for registered users
+            if (currentStatus.username && (!usernameInput.value || currentStatus.username !== usernameInput.value)) {
                 usernameInput.value = currentStatus.username;
             }
-            if (currentStatus.machine_type) {
+            // PIN is never returned from server for security reasons - keep localStorage value
+            
+            if (currentStatus.machine_type && (!machineTypeSelect.value || currentStatus.machine_type !== machineTypeSelect.value)) {
                 machineTypeSelect.value = currentStatus.machine_type;
                 // Load printer types for the current machine type
                 loadPrinterTypes();
             }
-            if (currentStatus.printer_type) {
+            if (currentStatus.printer_type && (!printerTypeSelect.value || currentStatus.printer_type !== printerTypeSelect.value)) {
                 printerTypeSelect.value = currentStatus.printer_type;
             }
+            
+            // Save current form state after updating from server
+            saveFormToStorage();
             
             // Buttons
             if (isRegistered) {

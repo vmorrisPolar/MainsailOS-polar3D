@@ -182,13 +182,11 @@ class PolarCloudService:
                     logger.info(f"Successfully registered with serial number: {self.serial_number}")
                     
                     # Disconnect and reconnect as per protocol
-                    if self.disconnect_on_register:
-                        logger.info("Disconnecting after registration as per protocol")
-                        await self.sio.disconnect()
-                        return
-                    
-                    # Send hello after successful registration
-                    await self.send_hello()
+                    # "Once successfully registered as indicated by receipt of a registerResponse command from the Status Server, 
+                    # the printer should disconnect from the Status Server and then reconnect. Upon reconnecting it will be 
+                    # sent a new welcome command to which it can respond with hello and validate the connection with its new serial number."
+                    logger.info("Disconnecting after registration as per protocol - will reconnect automatically")
+                    await self.sio.disconnect()
                 else:
                     logger.error(f"Registration failed: {data.get('reason', 'Unknown error')}")
             except Exception as e:
@@ -658,7 +656,10 @@ class PolarCloudService:
                 "email": username,
                 "pin": pin,
                 "publicKey": public_key_pem,
-                "macAddress": self.get_mac_address(),
+                "mfgSn": "1234567890", 
+                "myInfo": {
+                    "MAC": self.get_mac_address()
+                },
                 "machineType": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
                 "printerType": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
             }

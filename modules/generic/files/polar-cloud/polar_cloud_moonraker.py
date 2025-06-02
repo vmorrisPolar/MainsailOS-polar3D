@@ -54,7 +54,7 @@ class PolarCloudPlugin:
         else:
             # Create default config
             self.config['polar_cloud'] = {
-                'server_url': 'wss://printer4.polar3d.com',
+                'server_url': 'https://printer4.polar3d.com',
                 'username': '',
                 'pin': '',
                 'machine_type': 'Cartesian',
@@ -153,7 +153,7 @@ class PolarCloudPlugin:
             if web_request.get_action() == "GET":
                 # Return current configuration
                 return {
-                    "server_url": self.config.get('polar_cloud', 'server_url', fallback='wss://printer4.polar3d.com'),
+                    "server_url": self.config.get('polar_cloud', 'server_url', fallback='https://printer4.polar3d.com'),
                     "username": self.config.get('polar_cloud', 'username', fallback=''),
                     "machine_type": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
                     "printer_type": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
