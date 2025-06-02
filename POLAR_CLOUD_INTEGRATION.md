@@ -2,27 +2,29 @@
 
 ## Overview
 
-This integration adds Polar Cloud connectivity to MainsailOS, allowing users to register their 3D printers with Polar Cloud for remote monitoring and management.
+This integration adds Polar Cloud connectivity to MainsailOS, allowing users to register their 3D printers with Polar Cloud for remote monitoring and management. The integration uses Socket.IO for real-time communication with the Polar Cloud servers.
 
 ## Components
 
 ### 1. Backend Service (`polar_cloud.py`)
-- **Location**: `/home/pi/polar_cloud/polar_cloud.py`
-- **Purpose**: Main service that handles communication with Polar Cloud
+- **Location**: `/home/pi/polar-cloud/polar_cloud.py`
+- **Purpose**: Main service that handles Socket.IO communication with Polar Cloud
 - **Features**:
+  - Socket.IO client with automatic reconnection
   - Registration with username/PIN
-  - Automatic reconnection
-  - Status monitoring
+  - Real-time status monitoring
+  - Image upload capabilities
+  - Print job management
   - Configuration management
 
 ### 2. Moonraker Plugin (`polar_cloud_moonraker.py`)
-- **Location**: `/home/pi/printer_data/moonraker/plugins/polar_cloud_moonraker.py`
+- **Location**: `/home/pi/moonraker/moonraker/components/polar_cloud.py`
 - **Purpose**: Provides API endpoints for the web interface
 - **Endpoints**:
   - `GET /server/polar_cloud/status` - Get current status
   - `POST /server/polar_cloud/register` - Register with Polar Cloud
   - `POST /server/polar_cloud/unregister` - Disconnect from Polar Cloud
-  - `GET /server/polar_cloud/printer-types` - Get available printer types from Polar Cloud API
+  - `GET/POST /server/polar_cloud/config` - Get/update configuration
 
 ### 3. Web Interface (`polar_cloud_web.html`)
 - **Location**: `/home/pi/polar-cloud/web/index.html`
@@ -41,17 +43,48 @@ This integration adds Polar Cloud connectivity to MainsailOS, allowing users to 
   - Auto-start on boot
   - Restart on failure
   - Proper user permissions
+  - Virtual environment isolation
+
+## Socket.IO Communication
+
+### Why Socket.IO?
+The integration uses Socket.IO instead of raw WebSockets because:
+- **Protocol compatibility**: Polar Cloud servers use Socket.IO protocol
+- **Automatic reconnection**: Built-in connection management
+- **Event-based messaging**: Structured communication with named events
+- **Fallback support**: Automatic transport fallback if WebSocket fails
+
+### Connection Details
+- **Server URL**: `https://printer4.polar3d.com` (Socket.IO endpoint)
+- **Transport**: WebSocket (primary), with automatic fallbacks
+- **Events**: Welcome, registration, status updates, print commands, etc.
 
 ## Installation Process
 
 The integration is installed via the `56-polar-cloud` module during image build:
 
-1. **Dependencies**: Installs `python3-pycryptodome` and other required packages
-2. **Service Files**: Copies service files to appropriate locations
-3. **Moonraker Configuration**: Adds plugin configuration to `moonraker.conf`
-4. **Web Interface**: Creates standalone web interface accessible via nginx
-5. **Permissions**: Sets proper file ownership and permissions
-6. **Service Activation**: Enables the systemd service
+1. **Dependencies**: Installs Socket.IO client and other required packages
+2. **Virtual Environment**: Creates isolated Python environment with dependencies
+3. **Service Files**: Copies service files to appropriate locations
+4. **Moonraker Configuration**: Adds plugin configuration to `moonraker.conf`
+5. **Web Interface**: Creates standalone web interface accessible via nginx
+6. **Permissions**: Sets proper file ownership and permissions
+7. **Service Activation**: Enables the systemd service
+
+## Dependencies
+
+### Python Packages (installed in virtual environment)
+- `python-socketio[client]>=5.0` - Socket.IO client library
+- `cryptography>=3.0` - RSA key generation and signing
+- `Pillow>=8.0` - Image processing for webcam uploads
+- `requests>=2.25` - HTTP client for API calls
+- `aiohttp>=3.7` - Async HTTP support for Socket.IO
+
+### System Packages
+- `python3-socketio` - System Socket.IO package
+- `python3-pycryptodome` - Cryptography support
+- `python3-requests` - HTTP client
+- `python3-pil` - Image processing
 
 ## Client Identification
 
@@ -84,7 +117,7 @@ After building and flashing the image:
 2. **Add `/polar-cloud/` to the URL**: `http://your-printer-ip/polar-cloud/`
 3. **You'll see the Polar Cloud configuration page** with:
    - Real-time connection status
-   - Registration form with dynamic printer types from Polar Cloud API
+   - Registration form with dynamic printer types
    - Connect/Disconnect buttons
 
 ### Option 2: Manual Configuration
@@ -110,10 +143,10 @@ After building and flashing the image:
 
 - **Web Interface**: Uses the Moonraker plugin API to update the config file and restart the service
 - **Manual Configuration**: The service automatically detects credentials in the config file and attempts registration on startup
-- **Printer Types**: The web interface fetches current printer types from the Polar Cloud API (`https://polar3d.com/api/v1/printer_makes`) for accurate options
+- **Socket.IO Connection**: The service establishes a Socket.IO connection and handles all real-time communication
 
 ### Status Indicators
-- **Green dot**: Connected and registered
+- **Green dot**: Connected and registered via Socket.IO
 - **Orange dot**: Service active but not registered
 - **Gray dot**: Service inactive
 
@@ -134,8 +167,34 @@ The standalone web interface approach works because:
 2. **Direct API access**: Communicates directly with our Moonraker plugin
 3. **Nginx integration**: Served alongside Mainsail via the same web server
 4. **Reliable access**: Always available at a predictable URL
+5. **Socket.IO backend**: Robust real-time communication with Polar Cloud
 
 ## Configuration Files
+
+### Polar Cloud Configuration (`polar_cloud.conf`)
+```ini
+[polar_cloud]
+# Polar Cloud Server Configuration (Socket.IO endpoint)
+server_url = https://printer4.polar3d.com
+
+# User Credentials
+username = 
+pin = 
+serial_number = 
+
+# Printer Configuration
+machine_type = Cartesian
+printer_type = Cartesian
+
+# Image Settings
+max_image_size = 150000
+
+# Debug Settings
+verbose = false
+
+# Connection Settings
+status_interval = 60
+```
 
 ### Moonraker Configuration
 ```ini
@@ -155,15 +214,18 @@ primary_branch: main
 ```ini
 [Unit]
 Description=Polar Cloud Service
-After=network.target
+After=network.target moonraker.service
+Wants=network.target
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/polar_cloud
-ExecStart=/usr/bin/python3 /home/pi/polar_cloud/polar_cloud.py
+Group=pi
+ExecStart=/home/pi/polar-cloud/venv/bin/python /home/pi/polar-cloud/polar_cloud.py
 Restart=always
-RestartSec=5
+RestartSec=10
+WorkingDirectory=/home/pi/polar-cloud
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target
@@ -175,11 +237,30 @@ The installation automatically adds this location block to `/etc/nginx/sites-ava
 ```nginx
 location /polar-cloud/ {
     alias /home/pi/polar-cloud/web/;
-    try_files $uri $uri/ /index.html;
+    try_files $uri $uri/ /polar-cloud/index.html;
 }
 ```
 
+## Testing
+
+### Socket.IO Connection Test
+A test script is provided to verify Socket.IO connectivity:
+
+```bash
+# Run the test script
+cd /home/pi/polar-cloud
+./venv/bin/python test_socketio.py
+```
+
+This will attempt to connect to the Polar Cloud Socket.IO server and report the results.
+
 ## Troubleshooting
+
+### Socket.IO Connection Issues
+1. Check that the service is running: `sudo systemctl status polar_cloud`
+2. Verify the server URL in config: `cat /home/pi/printer_data/config/polar_cloud.conf`
+3. Test Socket.IO connectivity: `cd /home/pi/polar-cloud && ./venv/bin/python test_socketio.py`
+4. Check for firewall issues blocking HTTPS/WebSocket connections
 
 ### Web Interface Not Accessible
 1. Check that nginx is running: `sudo systemctl status nginx`
@@ -197,32 +278,21 @@ sudo journalctl -u polar_cloud -f
 
 # Restart service
 sudo systemctl restart polar_cloud
+
+# Check virtual environment
+/home/pi/polar-cloud/venv/bin/python -c "import socketio; print('Socket.IO available')"
 ```
 
-### Moonraker Plugin Issues
-```bash
-# Check Moonraker logs
-tail -f ~/printer_data/logs/moonraker.log
-
-# Restart Moonraker
-sudo systemctl restart moonraker
-```
-
-### API Testing
-```bash
-# Test status endpoint
-curl http://localhost/server/polar_cloud/status
-
-# Test registration (replace with actual credentials)
-curl -X POST http://localhost/server/polar_cloud/register \
-  -H "Content-Type: application/json" \
-  -d '{"username":"your@email.com","pin":"1234","machine_type":"Cartesian","printer_type":"Cartesian"}'
-```
+### Common Issues
+1. **"Module not found" errors**: Virtual environment may not be properly set up
+2. **Connection timeouts**: Check network connectivity and firewall settings
+3. **Registration failures**: Verify username/PIN credentials are correct
+4. **Image upload failures**: Check webcam accessibility and image size limits
 
 ## File Locations Summary
 
 ```
-/home/pi/polar_cloud/
+/home/pi/polar-cloud/
 ├── polar_cloud.py              # Main service
 ├── polar_cloud.conf            # Configuration
 ├── polar_cloud.service         # Service definition

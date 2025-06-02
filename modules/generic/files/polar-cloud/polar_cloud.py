@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Polar Cloud Service for MainsailOS
-Connects printers to the Polar Cloud via websocket
+Connects printers to the Polar Cloud via Socket.IO
 """
 
 import asyncio
-import websockets
+import socketio
 import json
 import logging
 import os
@@ -26,9 +26,21 @@ import time
 import signal
 import subprocess
 
-# Configure logging
+
+# --- Patch: Set logging level based on config verbose flag ---
+def get_verbose_flag(config_file='/home/pi/printer_data/config/polar_cloud.conf'):
+    import configparser
+    config = configparser.ConfigParser()
+    if os.path.exists(config_file):
+        config.read(config_file)
+        verbose = config.get('polar_cloud', 'verbose', fallback='false').lower()
+        return verbose in ('1', 'true', 'yes', 'on')
+    return False
+
+_verbose = get_verbose_flag()
+_log_level = logging.DEBUG if _verbose else logging.INFO
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('/home/pi/printer_data/logs/polar_cloud.log'),
@@ -57,7 +69,7 @@ class PolarCloudService:
     def __init__(self, config_file='/home/pi/printer_data/config/polar_cloud.conf'):
         self.config_file = config_file
         self.config = configparser.ConfigParser()
-        self.websocket = None
+        self.sio = socketio.AsyncClient()
         self.connected = False
         self.running = True
         self.serial_number = None
@@ -93,6 +105,176 @@ class PolarCloudService:
         # Generate or load keys
         self.ensure_keys()
         
+        # Set up Socket.IO event handlers
+        self.setup_socketio_handlers()
+        
+    def setup_socketio_handlers(self):
+        """Set up Socket.IO event handlers"""
+        
+        @self.sio.event
+        async def connect():
+            logger.info("Connected to Polar Cloud Socket.IO server")
+            self.connected = True
+            self.hello_sent = False
+            self.challenge = None
+        
+        @self.sio.event
+        async def disconnect():
+            logger.warning("Disconnected from Polar Cloud Socket.IO server")
+            self.connected = False
+            self.hello_sent = False
+        
+        @self.sio.event
+        async def connect_error(data):
+            logger.error(f"Socket.IO connection error: {data}")
+            self.connected = False
+        
+        @self.sio.event
+        async def message(data):
+            """Handle incoming messages from Polar Cloud"""
+            try:
+                if isinstance(data, str):
+                    message_data = json.loads(data)
+                else:
+                    message_data = data
+                
+                await self.handle_message(message_data)
+            except Exception as e:
+                logger.error(f"Error handling Socket.IO message: {e}")
+        
+        # Handle specific Polar Cloud events
+        @self.sio.event
+        async def welcome(data):
+            """Handle welcome message with challenge"""
+            try:
+                self.challenge = data.get("challenge")
+                logger.info(f"Received welcome from Polar Cloud with challenge: {self.challenge}")
+                
+                # Check if we need to register
+                self.serial_number = self.config.get('polar_cloud', 'serial_number', fallback=None)
+                username = self.config.get('polar_cloud', 'username', fallback='')
+                pin = self.config.get('polar_cloud', 'pin', fallback='')
+                
+                if not self.serial_number and username and pin:
+                    # Need to register
+                    logger.info("No serial number found, attempting registration")
+                    await self.register_printer(username, pin)
+                elif self.serial_number:
+                    # Already registered, send hello
+                    logger.info("Serial number found, sending hello")
+                    await self.send_hello()
+                else:
+                    logger.warning("No credentials configured for registration")
+            except Exception as e:
+                logger.error(f"Error handling welcome: {e}")
+        
+        @self.sio.event
+        async def registerResponse(data):
+            """Handle registration response"""
+            try:
+                if data.get("success"):
+                    self.serial_number = data.get("serialNumber")
+                    
+                    # Save serial number to config
+                    self.config['polar_cloud']['serial_number'] = self.serial_number
+                    self.save_config()
+                    
+                    logger.info(f"Successfully registered with serial number: {self.serial_number}")
+                    
+                    # Disconnect and reconnect as per protocol
+                    if self.disconnect_on_register:
+                        logger.info("Disconnecting after registration as per protocol")
+                        await self.sio.disconnect()
+                        return
+                    
+                    # Send hello after successful registration
+                    await self.send_hello()
+                else:
+                    logger.error(f"Registration failed: {data.get('reason', 'Unknown error')}")
+            except Exception as e:
+                logger.error(f"Error handling registration response: {e}")
+        
+        @self.sio.event
+        async def helloResponse(data):
+            """Handle hello response"""
+            try:
+                if data.get("success"):
+                    logger.info("Hello response received successfully")
+                    # Start sending status updates and request initial upload URLs
+                    if not hasattr(self, '_status_task') or self._status_task.done():
+                        self._status_task = asyncio.create_task(self.status_loop())
+                    
+                    # Request initial upload URLs
+                    await self.request_upload_url("idle")
+                    
+                else:
+                    logger.error(f"Hello failed: {data.get('reason', 'Unknown error')}")
+            except Exception as e:
+                logger.error(f"Error handling hello response: {e}")
+        
+        @self.sio.event
+        async def getUrlResponse(data):
+            """Handle upload URL response"""
+            try:
+                upload_type = data.get("type")
+                url_data = data.get("url")
+                
+                if upload_type and url_data:
+                    self.upload_urls[upload_type] = url_data
+                    logger.debug(f"Received upload URL for type: {upload_type}")
+                else:
+                    logger.warning(f"Invalid upload URL response: {data}")
+            except Exception as e:
+                logger.error(f"Error handling upload URL response: {e}")
+        
+        @self.sio.event
+        async def print(data):
+            """Handle print command"""
+            try:
+                await self.execute_print_command(data)
+            except Exception as e:
+                logger.error(f"Error handling print command: {e}")
+        
+        @self.sio.event
+        async def cancel(data):
+            """Handle cancel command"""
+            try:
+                await self.execute_cancel_command()
+            except Exception as e:
+                logger.error(f"Error handling cancel command: {e}")
+        
+        @self.sio.event
+        async def pause(data):
+            """Handle pause command"""
+            try:
+                await self.execute_pause_command()
+            except Exception as e:
+                logger.error(f"Error handling pause command: {e}")
+        
+        @self.sio.event
+        async def resume(data):
+            """Handle resume command"""
+            try:
+                await self.execute_resume_command()
+            except Exception as e:
+                logger.error(f"Error handling resume command: {e}")
+        
+        @self.sio.event
+        async def delete(data):
+            """Handle delete command"""
+            try:
+                await self.execute_delete_command()
+            except Exception as e:
+                logger.error(f"Error handling delete command: {e}")
+        
+        @self.sio.event
+        async def temperature(data):
+            """Handle temperature command"""
+            try:
+                await self.execute_temperature_command(data)
+            except Exception as e:
+                logger.error(f"Error handling temperature command: {e}")
+    
     def load_config(self):
         """Load configuration from file"""
         if os.path.exists(self.config_file):
@@ -100,7 +282,7 @@ class PolarCloudService:
         else:
             # Create default config
             self.config['polar_cloud'] = {
-                'server_url': 'wss://printer4.polar3d.com',
+                'server_url': 'https://printer4.polar3d.com',
                 'username': '',
                 'pin': '',
                 'machine_type': 'Cartesian',
@@ -187,12 +369,11 @@ class PolarCloudService:
                 if 'file_position' in sdcard_data:
                     self.job_bytes_read = sdcard_data['file_position']
             
-            # Get filament usage (if available from print_stats)
-            print_stats = await self.get_moonraker_data("printer/objects/query?print_stats")
-            if print_stats and 'result' in print_stats and 'print_stats' in print_stats['result']:
-                stats_data = print_stats['result']['print_stats']
-                if 'filament_used' in stats_data:
-                    self.job_filament_used = stats_data['filament_used']
+            # Get filament sensor data if available
+            filament_data = await self.get_moonraker_data("printer/objects/query?filament_switch_sensor")
+            if filament_data and 'result' in filament_data:
+                # This would need to be customized based on actual filament sensor setup
+                pass
             
             return {
                 'file_size': self.job_file_size,
@@ -209,146 +390,170 @@ class PolarCloudService:
     
     async def get_printer_status(self):
         """Get current printer status from Moonraker"""
-        printer_info = await self.get_moonraker_data("printer/info")
-        printer_objects = await self.get_moonraker_data("printer/objects/query?print_stats&toolhead&extruder&heater_bed")
-        
-        status = {
-            "serialNumber": self.serial_number or "unknown",
-            "status": self.PSTATE_IDLE,  # Default to idle
-            "protocol": "2",
-            "progress": "",
-            "estimatedTime": "0",
-            "printSeconds": "0",
-            "file": "",
-            "temps": [],
-            "clientType": "MNSL"  # Identify as Mainsail client
-        }
-        
-        if printer_objects and 'result' in printer_objects:
-            result = printer_objects['result']
+        try:
+            # Get printer state
+            printer_info = await self.get_moonraker_data("printer/info")
+            print_stats = await self.get_moonraker_data("printer/objects/query?print_stats")
+            toolhead = await self.get_moonraker_data("printer/objects/query?toolhead")
+            heaters = await self.get_moonraker_data("printer/objects/query?heater_bed&extruder")
             
-            # Get print status
-            if 'print_stats' in result and 'state' in result['print_stats']:
-                klipper_state = result['print_stats']['state']
+            # Determine printer status
+            status = self.PSTATE_IDLE
+            progress = ""
+            progress_detail = ""
+            estimated_time = "0"
+            print_seconds = "0"
+            
+            if print_stats and 'result' in print_stats and 'print_stats' in print_stats['result']:
+                stats = print_stats['result']['print_stats']
+                state = stats.get('state', 'standby')
                 
-                # Map Klipper states to Polar Cloud states
-                if klipper_state == "printing":
+                if state == 'printing':
                     if self.is_printing_cloud_job:
-                        status["status"] = self.PSTATE_PRINTING  # Cloud print
+                        status = self.PSTATE_PRINTING
                     else:
-                        status["status"] = self.PSTATE_SERIAL    # Local print over serial/USB
-                elif klipper_state == "paused":
-                    status["status"] = self.PSTATE_PAUSED
-                elif klipper_state == "complete":
-                    if self.is_printing_cloud_job:
-                        status["status"] = self.PSTATE_COMPLETE  # Cloud print completed
-                    else:
-                        status["status"] = self.PSTATE_IDLE      # Local print completed, back to idle
-                elif klipper_state == "error":
-                    status["status"] = self.PSTATE_ERROR
-                elif klipper_state == "standby":
-                    status["status"] = self.PSTATE_IDLE
-                else:
-                    status["status"] = self.PSTATE_IDLE
-                
-                # Get print progress and time info
-                if 'print_stats' in result:
-                    print_stats = result['print_stats']
-                    if 'print_duration' in print_stats:
-                        status["printSeconds"] = str(int(print_stats['print_duration']))
-                    if 'filename' in print_stats and print_stats['filename']:
-                        status["file"] = print_stats['filename']
+                        status = self.PSTATE_SERIAL
                     
-                    # Add progress information for active prints
-                    if klipper_state in ["printing", "paused"]:
-                        # Calculate progress percentage if possible
-                        if 'print_duration' in print_stats and 'estimated_time' in print_stats:
-                            duration = print_stats['print_duration']
-                            estimated = print_stats['estimated_time']
-                            if estimated > 0:
-                                progress_pct = min(100.0, (duration / estimated) * 100)
-                                status["progress"] = f"{progress_pct:.1f}%"
-                        
-                        # Set progress detail
-                        if self.is_printing_cloud_job and self.current_job_id:
-                            status["progressDetail"] = f"Printing Job: {self.current_job_id} Percent Complete: {status.get('progress', '0%')}"
-                        else:
-                            status["progressDetail"] = f"Printing Local Job: {status.get('file', 'Unknown')} Percent Complete: {status.get('progress', '0%')}"
+                    # Calculate progress
+                    if stats.get('total_duration', 0) > 0 and stats.get('print_duration', 0) > 0:
+                        progress_pct = (stats['print_duration'] / stats['total_duration']) * 100
+                        progress = f"{progress_pct:.1f}%"
+                        progress_detail = f"{stats['print_duration']:.0f}s / {stats['total_duration']:.0f}s"
+                        estimated_time = str(int(stats.get('total_duration', 0)))
+                        print_seconds = str(int(stats.get('print_duration', 0)))
+                
+                elif state == 'paused':
+                    status = self.PSTATE_PAUSED
+                elif state == 'complete':
+                    status = self.PSTATE_COMPLETE
+                elif state == 'error':
+                    status = self.PSTATE_ERROR
             
-            # Get temperatures
+            # Get temperature data
             temps = []
-            if 'extruder' in result:
-                extruder = result['extruder']
-                temps.append({
-                    "name": "extruder",
-                    "actual": extruder.get('temperature', 0),
-                    "target": extruder.get('target', 0)
-                })
+            if heaters and 'result' in heaters:
+                result = heaters['result']
+                
+                # Extruder temperature
+                if 'extruder' in result:
+                    extruder = result['extruder']
+                    temps.append({
+                        "name": "extruder",
+                        "actual": round(extruder.get('temperature', 0), 1),
+                        "target": round(extruder.get('target', 0), 1)
+                    })
+                
+                # Bed temperature
+                if 'heater_bed' in result:
+                    bed = result['heater_bed']
+                    temps.append({
+                        "name": "bed",
+                        "actual": round(bed.get('temperature', 0), 1),
+                        "target": round(bed.get('target', 0), 1)
+                    })
             
-            if 'heater_bed' in result:
-                bed = result['heater_bed']
-                temps.append({
-                    "name": "bed",
-                    "actual": bed.get('temperature', 0),
-                    "target": bed.get('target', 0)
-                })
+            # Get position data
+            position = [0, 0, 0]
+            if toolhead and 'result' in toolhead and 'toolhead' in toolhead['result']:
+                toolhead_data = toolhead['result']['toolhead']
+                position = toolhead_data.get('position', [0, 0, 0])[:3]  # X, Y, Z
             
-            status["temps"] = temps
-        
-        return status
+            return {
+                "serialNumber": self.serial_number or "",
+                "status": status,
+                "temps": temps,
+                "position": [round(p, 2) for p in position],
+                "progress": progress,
+                "progressDetail": progress_detail,
+                "estimatedTime": estimated_time,
+                "printSeconds": print_seconds,
+                "macAddress": self.get_mac_address(),
+                "localIP": self.get_ip_address()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting printer status: {e}")
+            return {
+                "serialNumber": self.serial_number or "",
+                "status": self.PSTATE_ERROR,
+                "temps": [],
+                "position": [0, 0, 0],
+                "progress": "",
+                "progressDetail": "",
+                "estimatedTime": "0",
+                "printSeconds": "0",
+                "macAddress": self.get_mac_address(),
+                "localIP": self.get_ip_address()
+            }
     
     async def capture_webcam_image(self):
-        """Capture image from webcam and return as JPEG bytes"""
+        """Capture image from webcam"""
         try:
-            # Try to get webcam image from standard locations
-            webcam_urls = [
-                "http://localhost/webcam/?action=snapshot",
-                "http://localhost:8080/?action=snapshot",
-                f"http://{self.get_ip_address()}/webcam/?action=snapshot"
-            ]
+            # Try to get image from Moonraker webcam
+            response = requests.get(f"{self.moonraker_url}/webcam/?action=snapshot", timeout=10)
+            if response.status_code == 200:
+                return response.content
             
-            for url in webcam_urls:
-                try:
-                    response = requests.get(url, timeout=5)
-                    if response.status_code == 200:
-                        # Resize image if needed
-                        image = Image.open(io.BytesIO(response.content))
-                        
-                        # Convert to RGB if needed
-                        if image.mode != 'RGB':
-                            image = image.convert('RGB')
-                        
-                        # Resize if image is too large
-                        max_size = int(self.config.get('polar_cloud', 'max_image_size', fallback='150000'))
-                        
-                        # Estimate current size
-                        buffer = io.BytesIO()
-                        image.save(buffer, format='JPEG', quality=85)
-                        current_size = len(buffer.getvalue())
-                        
-                        if current_size > max_size:
-                            # Calculate scale factor
-                            scale_factor = (max_size / current_size) ** 0.5
-                            new_width = int(image.width * scale_factor)
-                            new_height = int(image.height * scale_factor)
-                            image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                        
-                        # Return JPEG bytes
-                        buffer = io.BytesIO()
-                        image.save(buffer, format='JPEG', quality=85)
-                        return buffer.getvalue()
-                except Exception as e:
-                    logger.debug(f"Failed to get image from {url}: {e}")
-                    continue
+            # Fallback: try direct webcam access
+            response = requests.get("http://localhost:8080/?action=snapshot", timeout=10)
+            if response.status_code == 200:
+                return response.content
+            
+            logger.warning("Could not capture webcam image")
+            return None
+            
         except Exception as e:
             logger.error(f"Error capturing webcam image: {e}")
-        
-        return None
+            return None
+    
+    async def resize_image(self, image_data, max_size=None):
+        """Resize image to fit within max_size bytes"""
+        try:
+            if not max_size:
+                max_size = int(self.config.get('polar_cloud', 'max_image_size', fallback='150000'))
+            
+            if len(image_data) <= max_size:
+                return image_data
+            
+            # Open image and resize
+            image = Image.open(io.BytesIO(image_data))
+            
+            # Start with 80% quality and reduce until size is acceptable
+            for quality in range(80, 10, -10):
+                output = io.BytesIO()
+                image.save(output, format='JPEG', quality=quality, optimize=True)
+                resized_data = output.getvalue()
+                
+                if len(resized_data) <= max_size:
+                    logger.debug(f"Resized image to {len(resized_data)} bytes with quality {quality}")
+                    return resized_data
+            
+            # If still too large, resize dimensions
+            width, height = image.size
+            for scale in [0.8, 0.6, 0.4, 0.2]:
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                resized_image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                
+                output = io.BytesIO()
+                resized_image.save(output, format='JPEG', quality=60, optimize=True)
+                resized_data = output.getvalue()
+                
+                if len(resized_data) <= max_size:
+                    logger.debug(f"Resized image to {new_width}x{new_height} ({len(resized_data)} bytes)")
+                    return resized_data
+            
+            logger.warning("Could not resize image to acceptable size")
+            return image_data[:max_size]  # Truncate as last resort
+            
+        except Exception as e:
+            logger.error(f"Error resizing image: {e}")
+            return image_data
     
     async def request_upload_url(self, upload_type, job_id=None):
         """Request a pre-signed POST URL for uploading images"""
         try:
-            if not self.websocket or not self.serial_number:
+            if not self.connected or not self.serial_number:
                 return None
             
             request_data = {
@@ -361,9 +566,7 @@ class PolarCloudService:
             if upload_type in ['printing', 'timelapse'] and job_id:
                 request_data["jobId"] = job_id
             
-            await self.websocket.send(json.dumps({
-                "getUrl": request_data
-            }))
+            await self.sio.emit("getUrl", request_data)
             
             logger.debug(f"Requested upload URL for type: {upload_type}")
             return True
@@ -372,79 +575,74 @@ class PolarCloudService:
             return False
     
     async def upload_image_to_cloud(self, image_data, upload_type):
-        """Upload image data using pre-signed POST URL"""
+        """Upload image to Polar Cloud using pre-signed URL"""
         try:
             if upload_type not in self.upload_urls:
                 logger.warning(f"No upload URL available for type: {upload_type}")
                 return False
             
-            url_info = self.upload_urls[upload_type]
+            url_data = self.upload_urls[upload_type]
             
-            # Check if URL has expired
-            if time.time() > url_info.get('expires_at', 0):
-                logger.info(f"Upload URL for {upload_type} has expired, requesting new one")
-                await self.request_upload_url(upload_type, self.current_job_id if upload_type == 'printing' else None)
-                return False
+            # Resize image if needed
+            resized_image = await self.resize_image(image_data)
             
-            # Prepare form data for POST request
-            files = {'file': ('image.jpg', image_data, 'image/jpeg')}
-            data = url_info['fields']
+            # Upload using pre-signed POST
+            files = {'file': ('image.jpg', resized_image, 'image/jpeg')}
+            data = url_data.get('fields', {})
             
-            # Upload the image
-            response = requests.post(url_info['url'], data=data, files=files, timeout=30)
+            response = requests.post(url_data['url'], data=data, files=files, timeout=30)
             
-            if response.status_code in [200, 201, 204]:
-                logger.debug(f"Successfully uploaded {upload_type} image to cloud")
-                self.last_image_upload[upload_type] = time.time()
+            if response.status_code in [200, 204]:
+                logger.debug(f"Successfully uploaded {upload_type} image ({len(resized_image)} bytes)")
                 return True
             else:
-                logger.error(f"Failed to upload {upload_type} image: HTTP {response.status_code}")
-                logger.debug(f"Response: {response.text}")
+                logger.error(f"Failed to upload image: {response.status_code} - {response.text}")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error uploading {upload_type} image: {e}")
+            logger.error(f"Error uploading image: {e}")
             return False
     
     async def handle_image_uploads(self):
         """Handle periodic image uploads based on printer state"""
         try:
-            # Determine current upload type based on printer state
             status = await self.get_printer_status()
             printer_status = status.get("status", self.PSTATE_IDLE)
+            current_time = time.time()
             
-            # Determine upload type and interval
-            if printer_status == self.PSTATE_PRINTING and self.is_printing_cloud_job:  # Printing cloud job
+            # Determine upload type based on printer state
+            if printer_status == self.PSTATE_PRINTING:
                 upload_type = "printing"
                 interval = self.image_upload_intervals['printing']
-            else:  # Idle or printing local job
+            else:
                 upload_type = "idle"
                 interval = self.image_upload_intervals['idle']
             
             # Check if it's time to upload
             last_upload = self.last_image_upload.get(upload_type, 0)
-            if time.time() - last_upload < interval:
+            if current_time - last_upload < interval:
                 return
             
-            # Capture image
+            # Capture and upload image
             image_data = await self.capture_webcam_image()
-            if not image_data:
-                logger.debug("No webcam image available for upload")
-                return
-            
-            # Ensure we have a valid upload URL
-            if upload_type not in self.upload_urls:
-                job_id = self.current_job_id if upload_type == 'printing' else None
-                await self.request_upload_url(upload_type, job_id)
-                return  # Wait for next cycle to upload
-            
-            # Upload the image
-            success = await self.upload_image_to_cloud(image_data, upload_type)
-            if success:
-                logger.info(f"Uploaded {upload_type} image to Polar Cloud")
+            if image_data:
+                # Request upload URL if we don't have one
+                if upload_type not in self.upload_urls:
+                    job_id = self.current_job_id if upload_type == "printing" else None
+                    await self.request_upload_url(upload_type, job_id)
+                    # Wait a bit for the URL response
+                    await asyncio.sleep(1)
+                
+                # Upload the image
+                if await self.upload_image_to_cloud(image_data, upload_type):
+                    self.last_image_upload[upload_type] = current_time
+                    
+                    # Request a new URL for next upload
+                    job_id = self.current_job_id if upload_type == "printing" else None
+                    await self.request_upload_url(upload_type, job_id)
             
         except Exception as e:
-            logger.error(f"Error in image upload handler: {e}")
+            logger.error(f"Error handling image uploads: {e}")
     
     async def register_printer(self, username, pin):
         """Register printer with Polar Cloud"""
@@ -465,12 +663,9 @@ class PolarCloudService:
                 "printerType": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
             }
             
-            if self.websocket:
-                await self.websocket.send(json.dumps({
-                    "register": registration_data
-                }))
-                logger.info("Registration request sent to Polar Cloud with MNSL client identifier")
-                return True
+            await self.sio.emit("register", registration_data)
+            logger.info("Registration request sent to Polar Cloud with MNSL client identifier")
+            return True
         except Exception as e:
             logger.error(f"Error registering printer: {e}")
         
@@ -499,12 +694,9 @@ class PolarCloudService:
                 "printerType": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
             }
             
-            if self.websocket:
-                await self.websocket.send(json.dumps({
-                    "hello": hello_data
-                }))
-                self.hello_sent = True
-                logger.info("Hello message sent to Polar Cloud")
+            await self.sio.emit("hello", hello_data)
+            self.hello_sent = True
+            logger.info("Hello message sent to Polar Cloud")
         except Exception as e:
             logger.error(f"Error sending hello: {e}")
     
@@ -517,175 +709,53 @@ class PolarCloudService:
             if self.last_status and status == self.last_status:
                 return
             
-            if self.websocket:
-                await self.websocket.send(json.dumps({
-                    "status": status
-                }))
-                self.last_status = status.copy()
-                logger.debug("Status sent to Polar Cloud")
+            await self.sio.emit("status", status)
+            self.last_status = status.copy()
+            logger.debug("Status sent to Polar Cloud")
         except Exception as e:
             logger.error(f"Error sending status: {e}")
     
-    async def handle_message(self, message):
-        """Handle incoming message from Polar Cloud"""
+    async def handle_message(self, data):
+        """Handle incoming message from Polar Cloud (legacy support)"""
         try:
-            data = json.loads(message)
-            logger.debug(f"Received message: {data}")
+            logger.debug(f"Received legacy message: {data}")
             
-            if "welcome" in data:
-                welcome_data = data["welcome"]
-                self.challenge = welcome_data.get("challenge")
-                logger.info(f"Received welcome from Polar Cloud with challenge: {self.challenge}")
-                
-                # Check if we need to register
-                self.serial_number = self.config.get('polar_cloud', 'serial_number', fallback=None)
-                username = self.config.get('polar_cloud', 'username', fallback='')
-                pin = self.config.get('polar_cloud', 'pin', fallback='')
-                
-                if not self.serial_number and username and pin:
-                    # Need to register
-                    logger.info("No serial number found, attempting registration")
-                    await self.register_printer(username, pin)
-                elif self.serial_number:
-                    # Already registered, send hello
-                    logger.info("Serial number found, sending hello")
-                    await self.send_hello()
-                else:
-                    logger.warning("No credentials configured for registration")
+            # Handle legacy message format for backward compatibility
+            if isinstance(data, dict):
+                if "welcome" in data:
+                    await self.sio.emit('welcome', data["welcome"])
+                elif "registerResponse" in data:
+                    await self.sio.emit('registerResponse', data["registerResponse"])
+                elif "helloResponse" in data:
+                    await self.sio.emit('helloResponse', data["helloResponse"])
+                elif "getUrlResponse" in data:
+                    await self.sio.emit('getUrlResponse', data["getUrlResponse"])
+                elif "print" in data:
+                    await self.sio.emit('print', data["print"])
+                elif "cancel" in data:
+                    await self.sio.emit('cancel', data["cancel"])
+                elif "pause" in data:
+                    await self.sio.emit('pause', data["pause"])
+                elif "resume" in data:
+                    await self.sio.emit('resume', data["resume"])
+                elif "delete" in data:
+                    await self.sio.emit('delete', data["delete"])
+                elif "temperature" in data:
+                    await self.sio.emit('temperature', data["temperature"])
             
-            elif "registerResponse" in data:
-                response = data["registerResponse"]
-                if response.get("success"):
-                    self.serial_number = response.get("serialNumber")
-                    
-                    # Save serial number to config
-                    self.config['polar_cloud']['serial_number'] = self.serial_number
-                    self.save_config()
-                    
-                    logger.info(f"Successfully registered with serial number: {self.serial_number}")
-                    
-                    # Disconnect and reconnect as per protocol
-                    if self.disconnect_on_register:
-                        logger.info("Disconnecting after registration as per protocol")
-                        await self.websocket.close()
-                        self.connected = False
-                        self.websocket = None
-                        return
-                    
-                    # Send hello after successful registration
-                    await self.send_hello()
-                else:
-                    logger.error(f"Registration failed: {response.get('reason', 'Unknown error')}")
-            
-            elif "helloResponse" in data:
-                response = data["helloResponse"]
-                if response.get("success"):
-                    logger.info("Hello response received successfully")
-                    # Start sending status updates and request initial upload URLs
-                    if not hasattr(self, '_status_task') or self._status_task.done():
-                        self._status_task = asyncio.create_task(self.status_loop())
-                    
-                    # Request initial upload URLs
-                    await self.request_upload_url("idle")
-                    
-                else:
-                    logger.error(f"Hello failed: {response.get('reason', 'Unknown error')}")
-            
-            elif "getUrlResponse" in data:
-                response = data["getUrlResponse"]
-                if response.get("status") == "SUCCESS":
-                    upload_type = response.get("type")
-                    expires_in = response.get("expires", 86400)  # Default 24 hours
-                    
-                    # Store the upload URL info
-                    self.upload_urls[upload_type] = {
-                        "url": response.get("url"),
-                        "fields": response.get("fields", {}),
-                        "maxSize": response.get("maxSize", 150000),
-                        "contentType": response.get("contentType", "image/jpeg"),
-                        "expires_at": time.time() + expires_in
-                    }
-                    
-                    logger.info(f"Received upload URL for {upload_type}, expires in {expires_in} seconds")
-                else:
-                    logger.error(f"Failed to get upload URL: {response.get('message', 'Unknown error')}")
-            
-            elif "print" in data:
-                # Handle print command
-                print_data = data["print"]
-                self.current_job_id = print_data.get("jobId")
-                self.is_printing_cloud_job = True
-                self.job_start_time = datetime.now().isoformat() + "Z"
-                
-                # Reset job tracking
-                self.job_file_size = 0
-                self.job_bytes_read = 0
-                self.job_filament_used = 0
-                
-                logger.info(f"Received print command for job: {self.current_job_id}")
-                
-                # Request printing upload URL
-                await self.request_upload_url("printing", self.current_job_id)
-                
-                # Execute print command via Moonraker
-                await self.execute_print_command(print_data)
-            
-            elif "cancel" in data:
-                # Handle cancel command
-                logger.info("Received cancel command")
-                
-                # Execute cancel via Moonraker
-                success = await self.execute_cancel_command()
-                if success:
-                    self.is_printing_cloud_job = False
-                    self.current_job_id = None
-                    self.job_start_time = None
-            
-            elif "pause" in data:
-                # Handle pause command
-                logger.info("Received pause command")
-                
-                # Execute pause via Moonraker
-                await self.execute_pause_command()
-            
-            elif "resume" in data:
-                # Handle resume command
-                logger.info("Received resume command")
-                
-                # Execute resume via Moonraker
-                await self.execute_resume_command()
-            
-            elif "delete" in data:
-                # Handle delete command - reset printer to unregistered state
-                logger.info("Received delete command - resetting printer to unregistered state")
-                await self.execute_delete_command()
-            
-            elif "temperature" in data:
-                # Handle temperature command
-                temp_data = data["temperature"]
-                logger.info(f"Received temperature command: {temp_data}")
-                
-                # Execute temperature control via Moonraker
-                await self.execute_temperature_command(temp_data)
-        
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing message: {e}")
         except Exception as e:
             logger.error(f"Error handling message: {e}")
     
-    async def connect_websocket(self):
-        """Connect to Polar Cloud websocket"""
-        server_url = self.config.get('polar_cloud', 'server_url', fallback='wss://printer4.polar3d.com')
+    async def connect_socketio(self):
+        """Connect to Polar Cloud Socket.IO server"""
+        server_url = self.config.get('polar_cloud', 'server_url', fallback='https://printer4.polar3d.com')
         
         try:
-            self.websocket = await websockets.connect(server_url)
-            self.connected = True
-            self.hello_sent = False
-            self.challenge = None
-            logger.info(f"Connected to Polar Cloud at {server_url}")
+            await self.sio.connect(server_url, transports=['websocket'])
+            logger.info(f"Connected to Polar Cloud Socket.IO server at {server_url}")
             return True
         except Exception as e:
-            logger.error(f"Error connecting to Polar Cloud: {e}")
+            logger.error(f"Error connecting to Polar Cloud Socket.IO server: {e}")
             self.connected = False
             return False
     
@@ -708,22 +778,12 @@ class PolarCloudService:
         while self.running:
             try:
                 if not self.connected:
-                    await self.connect_websocket()
+                    await self.connect_socketio()
                 
-                if self.websocket:
-                    try:
-                        # Listen for messages
-                        message = await asyncio.wait_for(self.websocket.recv(), timeout=1.0)
-                        await self.handle_message(message)
-                    except asyncio.TimeoutError:
-                        # No message received, continue
-                        continue
-                    except websockets.exceptions.ConnectionClosed:
-                        logger.warning("Websocket connection closed")
-                        self.connected = False
-                        self.websocket = None
-                        self.hello_sent = False
-                        await asyncio.sleep(5)  # Wait before reconnecting
+                if self.connected:
+                    # Socket.IO handles the connection automatically
+                    # Just wait and let the event handlers do their work
+                    await asyncio.sleep(1)
                 else:
                     await asyncio.sleep(5)  # Wait before trying to connect
             
@@ -739,7 +799,7 @@ class PolarCloudService:
     async def send_job_completion(self, job_id, state, print_seconds=0, filament_used=0, bytes_read=0, file_size=0):
         """Send job completion notification to Polar Cloud"""
         try:
-            if not self.websocket or not self.serial_number:
+            if not self.connected or not self.serial_number:
                 return False
             
             # Get current printer status for additional fields
@@ -785,9 +845,7 @@ class PolarCloudService:
             if estimated_time and estimated_time != "0":
                 job_data["estimatedTime"] = estimated_time
             
-            await self.websocket.send(json.dumps({
-                "job": job_data
-            }))
+            await self.sio.emit("job", job_data)
             
             logger.info(f"Sent job completion for {job_id}: {state}")
             return True
@@ -878,63 +936,63 @@ class PolarCloudService:
                     )
                     
                     if print_response.status_code == 200:
-                        logger.info(f"Successfully started print for job {job_id}")
-                        return True
+                        # Mark as cloud job
+                        self.is_printing_cloud_job = True
+                        self.current_job_id = job_id
+                        self.job_start_time = time.time()
+                        logger.info(f"Started printing cloud job {job_id}")
                     else:
                         logger.error(f"Failed to start print: {print_response.text}")
-                        return False
                 else:
-                    logger.error(f"Failed to download gcode file: HTTP {response.status_code}")
-                    return False
+                    logger.error(f"Failed to download gcode file: {response.status_code}")
+            
+            elif stl_file:
+                logger.info("STL file printing not yet implemented")
             else:
-                logger.error("No gcode file provided in print command")
-                return False
+                logger.warning("No gcode or STL file provided in print command")
                 
         except Exception as e:
             logger.error(f"Error executing print command: {e}")
-            return False
     
     async def execute_cancel_command(self):
         """Execute cancel command via Moonraker API"""
         try:
             response = requests.post(f"{self.moonraker_url}/printer/print/cancel", timeout=10)
             if response.status_code == 200:
-                logger.info("Successfully cancelled print")
-                return True
+                logger.info("Print cancelled successfully")
+                
+                # If it was a cloud job, send completion notification
+                if self.is_printing_cloud_job and self.current_job_id:
+                    await self.send_job_completion(self.current_job_id, "canceled")
+                    self.is_printing_cloud_job = False
+                    self.current_job_id = None
+                    self.job_start_time = None
             else:
                 logger.error(f"Failed to cancel print: {response.text}")
-                return False
         except Exception as e:
             logger.error(f"Error executing cancel command: {e}")
-            return False
     
     async def execute_pause_command(self):
         """Execute pause command via Moonraker API"""
         try:
             response = requests.post(f"{self.moonraker_url}/printer/print/pause", timeout=10)
             if response.status_code == 200:
-                logger.info("Successfully paused print")
-                return True
+                logger.info("Print paused successfully")
             else:
                 logger.error(f"Failed to pause print: {response.text}")
-                return False
         except Exception as e:
             logger.error(f"Error executing pause command: {e}")
-            return False
     
     async def execute_resume_command(self):
         """Execute resume command via Moonraker API"""
         try:
             response = requests.post(f"{self.moonraker_url}/printer/print/resume", timeout=10)
             if response.status_code == 200:
-                logger.info("Successfully resumed print")
-                return True
+                logger.info("Print resumed successfully")
             else:
                 logger.error(f"Failed to resume print: {response.text}")
-                return False
         except Exception as e:
             logger.error(f"Error executing resume command: {e}")
-            return False
     
     async def execute_delete_command(self):
         """Execute delete command - reset printer to unregistered state"""
@@ -961,10 +1019,8 @@ class PolarCloudService:
             logger.info("Printer reset to unregistered state")
             
             # Disconnect from cloud
-            if self.websocket:
-                await self.websocket.close()
-                self.connected = False
-                self.websocket = None
+            if self.connected:
+                await self.sio.disconnect()
             
             return True
         except Exception as e:
@@ -974,65 +1030,57 @@ class PolarCloudService:
     async def execute_temperature_command(self, temp_data):
         """Execute temperature command via Moonraker API"""
         try:
-            # Extract temperature settings
-            tool0_temp = temp_data.get("tool0")
-            bed_temp = temp_data.get("bed")
-            
-            success = True
-            
             # Set extruder temperature
-            if tool0_temp is not None:
+            if 'tool0' in temp_data:
+                temp = temp_data['tool0']
                 response = requests.post(
                     f"{self.moonraker_url}/printer/gcode/script",
-                    json={"script": f"SET_HEATER_TEMPERATURE HEATER=extruder TARGET={tool0_temp}"},
+                    json={"script": f"SET_HEATER_TEMPERATURE HEATER=extruder TARGET={temp}"},
                     timeout=10
                 )
                 if response.status_code == 200:
-                    logger.info(f"Set extruder temperature to {tool0_temp}°C")
+                    logger.info(f"Set extruder temperature to {temp}°C")
                 else:
                     logger.error(f"Failed to set extruder temperature: {response.text}")
-                    success = False
             
             # Set bed temperature
-            if bed_temp is not None:
+            if 'bed' in temp_data:
+                temp = temp_data['bed']
                 response = requests.post(
                     f"{self.moonraker_url}/printer/gcode/script",
-                    json={"script": f"SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET={bed_temp}"},
+                    json={"script": f"SET_HEATER_TEMPERATURE HEATER=heater_bed TARGET={temp}"},
                     timeout=10
                 )
                 if response.status_code == 200:
-                    logger.info(f"Set bed temperature to {bed_temp}°C")
+                    logger.info(f"Set bed temperature to {temp}°C")
                 else:
                     logger.error(f"Failed to set bed temperature: {response.text}")
-                    success = False
-            
-            return success
+                    
         except Exception as e:
             logger.error(f"Error executing temperature command: {e}")
-            return False
 
 def signal_handler(signum, frame):
     """Handle shutdown signals"""
     logger.info(f"Received signal {signum}, shutting down...")
-    global service
-    if service:
-        service.stop()
+    sys.exit(0)
 
 async def main():
-    global service
-    service = PolarCloudService()
-    
+    """Main entry point"""
     # Set up signal handlers
-    signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # Create and run service
+    service = PolarCloudService()
     
     try:
         await service.run()
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
+        logger.info("Received keyboard interrupt, shutting down...")
     finally:
         service.stop()
+        if service.connected:
+            await service.sio.disconnect()
 
 if __name__ == "__main__":
-    service = None
     asyncio.run(main()) 
