@@ -100,7 +100,7 @@ class PolarCloudService:
         else:
             # Create default config
             self.config['polar_cloud'] = {
-                'server_url': 'https://printer4.polar3d.com',
+                'server_url': 'wss://printer4.polar3d.com',
                 'username': '',
                 'pin': '',
                 'machine_type': 'Cartesian',
@@ -675,7 +675,7 @@ class PolarCloudService:
     
     async def connect_websocket(self):
         """Connect to Polar Cloud websocket"""
-        server_url = self.config.get('polar_cloud', 'server_url', fallback='https://printer4.polar3d.com')
+        server_url = self.config.get('polar_cloud', 'server_url', fallback='wss://printer4.polar3d.com')
         
         try:
             self.websocket = await websockets.connect(server_url)
