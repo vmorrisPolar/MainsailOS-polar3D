@@ -13,8 +13,8 @@ import json
 
 class PolarCloudPlugin:
     def __init__(self, config):
-        self.name = "polar_cloud"
         self.server = config.get_server()
+        self.name = config.get_name()
         self.config_file = "/home/pi/printer_data/config/polar_cloud.conf"
         self.config = configparser.ConfigParser()
         self.load_config()
@@ -96,24 +96,11 @@ class PolarCloudPlugin:
     async def _handle_register_request(self, web_request):
         """Handle registration requests"""
         try:
-            # Parse JSON body
-            body = web_request.get_body()
-            if isinstance(body, bytes):
-                body = body.decode('utf-8')
-            
-            if isinstance(body, str):
-                try:
-                    args = json.loads(body)
-                except json.JSONDecodeError:
-                    # Fall back to query args if JSON parsing fails
-                    args = web_request.get_args()
-            else:
-                args = web_request.get_args()
-            
-            username = args.get('username', '')
-            pin = args.get('pin', '')
-            machine_type = args.get('machine_type', 'Cartesian')
-            printer_type = args.get('printer_type', 'Cartesian')
+            # Use the web_request methods to get parameters
+            username = web_request.get_str('username', '')
+            pin = web_request.get_str('pin', '')
+            machine_type = web_request.get_str('machine_type', 'Cartesian')
+            printer_type = web_request.get_str('printer_type', 'Cartesian')
             
             if not username or not pin:
                 return {"error": "Username and PIN are required"}
@@ -163,7 +150,7 @@ class PolarCloudPlugin:
     async def _handle_config_request(self, web_request):
         """Handle configuration requests"""
         try:
-            if web_request.get_method() == "GET":
+            if web_request.get_action() == "GET":
                 # Return current configuration
                 return {
                     "server_url": self.config.get('polar_cloud', 'server_url', fallback='wss://status-dev.polar3d.com'),
@@ -176,23 +163,10 @@ class PolarCloudPlugin:
                 }
             else:
                 # Update configuration
-                # Parse JSON body
-                body = web_request.get_body()
-                if isinstance(body, bytes):
-                    body = body.decode('utf-8')
-                
-                if isinstance(body, str):
-                    try:
-                        args = json.loads(body)
-                    except json.JSONDecodeError:
-                        # Fall back to query args if JSON parsing fails
-                        args = web_request.get_args()
-                else:
-                    args = web_request.get_args()
-                
                 for key in ['server_url', 'machine_type', 'printer_type', 'max_image_size', 'verbose']:
-                    if key in args:
-                        self.config['polar_cloud'][key] = str(args[key])
+                    value = web_request.get_str(key, None)
+                    if value is not None:
+                        self.config['polar_cloud'][key] = value
                 
                 self.save_config()
                 

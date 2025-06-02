@@ -96,23 +96,15 @@ if ! grep -q "\[polar_cloud\]" "${MOONRAKER_CONFIG}" 2>/dev/null; then
 
 [polar_cloud]
 # Polar Cloud plugin configuration
-enabled: True
 EOF
 fi
 
-# Add the plugin include directive if it doesn't exist
-if ! grep -q "polar_cloud_moonraker" "${MOONRAKER_CONFIG}" 2>/dev/null; then
-    # Check if there's already an [include] section
-    if grep -q "^\[include" "${MOONRAKER_CONFIG}" 2>/dev/null; then
-        # Add to existing include section
-        sed -i '/^\[include/a polar_cloud_moonraker.py' "${MOONRAKER_CONFIG}"
-    else
-        # Create new include section
-        cat >> "${MOONRAKER_CONFIG}" << 'EOF'
+# Add include directive for the plugin file
+if ! grep -q "polar_cloud_moonraker.py" "${MOONRAKER_CONFIG}" 2>/dev/null; then
+    cat >> "${MOONRAKER_CONFIG}" << 'EOF'
 
 [include polar_cloud_moonraker.py]
 EOF
-    fi
 fi
 
 ########################################
