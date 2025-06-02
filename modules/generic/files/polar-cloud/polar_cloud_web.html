@@ -583,36 +583,39 @@
                     return;
                 }
                 
-                const response = await fetch(`${API_BASE}/printer-types?machine_type=${encodeURIComponent(machineType)}`);
-                const data = await response.json();
+                // Call Polar Cloud API directly like OctoPrint does
+                const apiUrl = `https://polar3d.com/api/v1/printer_makes?filter=${machineType.toLowerCase()}`;
+                const response = await fetch(apiUrl);
                 
-                if (data.error) {
-                    throw new Error(data.error);
+                if (!response.ok) {
+                    throw new Error(`API request failed: ${response.status}`);
                 }
                 
-                const printerTypes = data.printer_types;
+                const data = await response.json();
+                
+                // Extract printer types from API response
+                let printerTypes = [];
+                if (data && data.printerMakes && Array.isArray(data.printerMakes)) {
+                    printerTypes = data.printerMakes;
+                }
+                
+                // Add "Other/Custom" option
+                if (printerTypes.length > 0) {
+                    printerTypes.push("Other/Custom");
+                } else {
+                    // Fallback if no printers found
+                    printerTypes = [`${machineType}`, "Other/Custom"];
+                }
+                
                 populatePrinterTypeSelect(printerTypes);
+                
             } catch (error) {
                 console.error('Error loading printer types:', error);
                 showMessage('Failed to load printer types, using defaults: ' + error.message, 'error');
+                
                 // Provide fallback printer types based on machine type
                 const machineType = machineTypeSelect.value || 'Cartesian';
-                let fallbackTypes;
-                
-                switch (machineType.toLowerCase()) {
-                    case 'cartesian':
-                        fallbackTypes = ['Cartesian', 'Ender 3', 'Prusa MK3S', 'Other/Custom'];
-                        break;
-                    case 'delta':
-                        fallbackTypes = ['Delta', 'Rostock Max', 'FLSUN Q5', 'Other/Custom'];
-                        break;
-                    case 'belt':
-                        fallbackTypes = ['Belt', 'CR-30 3DPrintMill', 'iFactory One', 'Other/Custom'];
-                        break;
-                    default:
-                        fallbackTypes = ['Cartesian', 'Delta', 'Belt', 'Other/Custom'];
-                }
-                
+                const fallbackTypes = [`${machineType}`, "Other/Custom"];
                 populatePrinterTypeSelect(fallbackTypes);
             }
         }

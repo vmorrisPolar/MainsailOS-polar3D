@@ -9,18 +9,17 @@ import configparser
 import os
 import asyncio
 import subprocess
-import aiohttp
 import json
-from tornado.web import RequestHandler
 
 class PolarCloudPlugin:
     def __init__(self, config):
+        self.name = "polar_cloud"
         self.server = config.get_server()
         self.config_file = "/home/pi/printer_data/config/polar_cloud.conf"
         self.config = configparser.ConfigParser()
         self.load_config()
         
-        # Register API endpoints
+        # Register API endpoints using the correct Moonraker method
         self.server.register_endpoint(
             "/server/polar_cloud/status", ["GET"],
             self._handle_status_request
@@ -37,12 +36,16 @@ class PolarCloudPlugin:
             "/server/polar_cloud/config", ["GET", "POST"],
             self._handle_config_request
         )
-        self.server.register_endpoint(
-            "/server/polar_cloud/printer-types", ["GET"],
-            self._handle_printer_types_request
-        )
         
-        logging.info("Polar Cloud plugin loaded")
+        logging.info("Polar Cloud plugin loaded successfully")
+
+    async def component_init(self):
+        """Called when all components have been loaded"""
+        pass
+
+    async def close(self):
+        """Called when shutting down"""
+        pass
     
     def load_config(self):
         """Load configuration from file"""
@@ -93,7 +96,20 @@ class PolarCloudPlugin:
     async def _handle_register_request(self, web_request):
         """Handle registration requests"""
         try:
-            args = web_request.get_args()
+            # Parse JSON body
+            body = web_request.get_body()
+            if isinstance(body, bytes):
+                body = body.decode('utf-8')
+            
+            if isinstance(body, str):
+                try:
+                    args = json.loads(body)
+                except json.JSONDecodeError:
+                    # Fall back to query args if JSON parsing fails
+                    args = web_request.get_args()
+            else:
+                args = web_request.get_args()
+            
             username = args.get('username', '')
             pin = args.get('pin', '')
             machine_type = args.get('machine_type', 'Cartesian')
@@ -160,7 +176,19 @@ class PolarCloudPlugin:
                 }
             else:
                 # Update configuration
-                args = web_request.get_args()
+                # Parse JSON body
+                body = web_request.get_body()
+                if isinstance(body, bytes):
+                    body = body.decode('utf-8')
+                
+                if isinstance(body, str):
+                    try:
+                        args = json.loads(body)
+                    except json.JSONDecodeError:
+                        # Fall back to query args if JSON parsing fails
+                        args = web_request.get_args()
+                else:
+                    args = web_request.get_args()
                 
                 for key in ['server_url', 'machine_type', 'printer_type', 'max_image_size', 'verbose']:
                     if key in args:
@@ -180,60 +208,6 @@ class PolarCloudPlugin:
         except Exception as e:
             logging.error(f"Error handling config request: {e}")
             return {"error": str(e)}
-
-    async def _handle_printer_types_request(self, web_request):
-        """Handle printer types requests"""
-        try:
-            # Get machine type from query parameters for filtering
-            args = web_request.get_args()
-            machine_type = args.get('machine_type', 'cartesian').lower()
-            
-            # Fetch printer types from Polar Cloud API with machine type filter
-            async with aiohttp.ClientSession() as session:
-                api_url = f'https://polar3d.com/api/v1/printer_makes?filter={machine_type}'
-                async with session.get(api_url) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        # Extract printer type names from the API response
-                        printer_types = []
-                        
-                        # The API returns {"printerMakes": [...]} structure
-                        if isinstance(data, dict) and 'printerMakes' in data:
-                            printer_makes = data['printerMakes']
-                            if isinstance(printer_makes, list):
-                                printer_types = printer_makes
-                        elif isinstance(data, list):
-                            # Fallback for direct array response
-                            for item in data:
-                                if isinstance(item, dict) and 'name' in item:
-                                    printer_types.append(item['name'])
-                                elif isinstance(item, str):
-                                    printer_types.append(item)
-                        
-                        # Add "Other/Custom" option
-                        if printer_types:
-                            printer_types.append("Other/Custom")
-                        
-                        # If no printer types found, provide machine-type specific defaults
-                        if not printer_types:
-                            if machine_type.lower() == 'cartesian':
-                                printer_types = ['Cartesian', 'Ender 3', 'Prusa MK3S', 'Other/Custom']
-                            elif machine_type.lower() == 'delta':
-                                printer_types = ['Delta', 'Rostock Max', 'FLSUN Q5', 'Other/Custom']
-                            elif machine_type.lower() == 'belt':
-                                printer_types = ['Belt', 'CR-30 3DPrintMill', 'iFactory One', 'Other/Custom']
-                            else:
-                                printer_types = ['Cartesian', 'Delta', 'Belt', 'Other/Custom']
-                        
-                        return {"printer_types": printer_types}
-                    else:
-                        logging.warning(f"Failed to fetch printer types from Polar Cloud API: {response.status}")
-                        # Return default types if API fails
-                        return {"printer_types": ['Cartesian', 'Delta', 'Belt', 'Other/Custom']}
-        except Exception as e:
-            logging.error(f"Error fetching printer types: {e}")
-            # Return default types if there's an error
-            return {"printer_types": ['Cartesian', 'Delta', 'Belt', 'Other/Custom']}
 
 def load_component(config):
     return PolarCloudPlugin(config) 
