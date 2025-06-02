@@ -40,7 +40,7 @@ sudo -u "${BASE_USER}" python3 -m venv polar-cloud/venv
 
 # Install Python dependencies
 sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install --upgrade pip
-sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets pycryptodome requests pillow aiohttp
+sudo -u "${BASE_USER}" polar-cloud/venv/bin/pip install websockets pycryptodome requests pillow aiohttp cryptography
 
 popd &> /dev/null || exit 1
 
@@ -53,9 +53,9 @@ cp /files/polar-cloud/polar_cloud.py "/home/${BASE_USER}/polar-cloud/"
 cp /files/polar-cloud/polar_cloud.service "/etc/systemd/system/"
 cp /files/polar-cloud/polar_cloud.conf "/home/${BASE_USER}/printer_data/config/"
 
-# Create moonraker plugins directory and copy plugin
-sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/printer_data/moonraker/plugins"
-cp /files/polar-cloud/polar_cloud_moonraker.py "/home/${BASE_USER}/printer_data/moonraker/plugins/"
+# Create moonraker components directory and copy plugin
+sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/moonraker/moonraker/components"
+cp /files/polar-cloud/polar_cloud_moonraker.py "/home/${BASE_USER}/moonraker/moonraker/components/polar_cloud.py"
 
 # Copy simple web interface
 sudo -u "${BASE_USER}" mkdir -p "/home/${BASE_USER}/polar-cloud/web"
@@ -64,7 +64,7 @@ cp /files/polar-cloud/polar_cloud_web.html "/home/${BASE_USER}/polar-cloud/web/i
 # Fix ownership
 chown -R "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/polar-cloud"
 chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/printer_data/config/polar_cloud.conf"
-chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/printer_data/moonraker/plugins/polar_cloud_moonraker.py"
+chown "${BASE_USER}:${BASE_USER}" "/home/${BASE_USER}/moonraker/moonraker/components/polar_cloud.py"
 
 ########################################
 # Enable Service                       #
@@ -96,14 +96,6 @@ if ! grep -q "\[polar_cloud\]" "${MOONRAKER_CONFIG}" 2>/dev/null; then
 
 [polar_cloud]
 # Polar Cloud plugin configuration
-EOF
-fi
-
-# Add include directive for the plugin file
-if ! grep -q "polar_cloud_moonraker.py" "${MOONRAKER_CONFIG}" 2>/dev/null; then
-    cat >> "${MOONRAKER_CONFIG}" << 'EOF'
-
-[include polar_cloud_moonraker.py]
 EOF
 fi
 

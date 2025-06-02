@@ -7,14 +7,14 @@ This service connects MainsailOS printers to the Polar Cloud platform, enabling 
 This implementation follows the Polar Cloud protocol as defined in the OctoPrint-PolarCloud plugin. The service properly implements the required message flow:
 
 ### Registration Flow (First Time)
-1. **Connect** to `wss://status-dev.polar3d.com`
+1. **Connect** to `https://printer4.polar3d.com`
 2. **Receive welcome.json** with challenge string
 3. **Send register.json** with credentials and public key
 4. **Receive registerResponse.json** with serial number
 5. **Disconnect and reconnect** (as per protocol)
 
 ### Normal Connection Flow
-1. **Connect** to `wss://status-dev.polar3d.com`
+1. **Connect** to `https://printer4.polar3d.com`
 2. **Receive welcome.json** with challenge string
 3. **Generate RSA signature** of challenge using private key
 4. **Send hello.json** with signed challenge
@@ -124,7 +124,7 @@ The configuration file is located at `/home/pi/printer_data/config/polar_cloud.c
 
 ```ini
 [polar_cloud]
-server_url = wss://status-dev.polar3d.com
+server_url = https://printer4.polar3d.com
 username = your-email@example.com
 pin = your-pin
 machine_type = Cartesian
@@ -437,7 +437,7 @@ journalctl -u polar-cloud -f
 ### Common Issues
 
 1. **Registration fails**: Check username/PIN credentials
-2. **Connection fails**: Check network connectivity to status-dev.polar3d.com
+2. **Connection fails**: Check network connectivity to printer4.polar3d.com
 3. **No webcam images**: Verify webcam is accessible at standard URLs
 4. **Status not updating**: Check Moonraker API connectivity
 5. **Image uploads failing**: Check webcam configuration and network connectivity
