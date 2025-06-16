@@ -69,7 +69,13 @@ class PolarCloudService:
     def __init__(self, config_file='/home/pi/printer_data/config/polar_cloud.conf'):
         self.config_file = config_file
         self.config = configparser.ConfigParser()
-        self.sio = socketio.AsyncClient()
+        self.sio = socketio.AsyncClient(
+            reconnection=True,
+            reconnection_attempts=0,  # Unlimited attempts
+            reconnection_delay=1,
+            reconnection_delay_max=30,
+            max_reconnection_attempts=0
+        )
         self.connected = False
         self.running = True
         self.serial_number = None
@@ -144,6 +150,25 @@ class PolarCloudService:
         
         # Handle specific Polar Cloud events
         @self.sio.event
+        async def connect():
+            """Handle successful connection"""
+            logger.info("Connected to Polar Cloud Socket.IO server")
+            self.connected = True
+        
+        @self.sio.event
+        async def disconnect():
+            """Handle disconnection"""
+            logger.warning("Disconnected from Polar Cloud Socket.IO server")
+            self.connected = False
+            self.hello_sent = False
+        
+        @self.sio.event
+        async def connect_error(data):
+            """Handle connection error"""
+            logger.error(f"Connection error: {data}")
+            self.connected = False
+        
+        @self.sio.event
         async def welcome(data):
             """Handle welcome message with challenge"""
             try:
@@ -154,6 +179,10 @@ class PolarCloudService:
                 self.serial_number = self.config.get('polar_cloud', 'serial_number', fallback=None)
                 username = self.config.get('polar_cloud', 'username', fallback='')
                 pin = self.config.get('polar_cloud', 'pin', fallback='')
+                
+                logger.debug(f"Serial number from config: {self.serial_number}")
+                logger.debug(f"Username configured: {'Yes' if username else 'No'}")
+                logger.debug(f"PIN configured: {'Yes' if pin else 'No'}")
                 
                 if not self.serial_number and username and pin:
                     # Need to register
@@ -170,25 +199,49 @@ class PolarCloudService:
         
         @self.sio.event
         async def registerResponse(data):
-            """Handle registration response"""
+            """Handle registration response
+            Expected format: {"serialNumber": "printer-serial-number", "status": "SUCCESS", "reason": "SUCCESS"}
+            """
             try:
-                if data.get("success"):
-                    self.serial_number = data.get("serialNumber")
+                logger.info(f"Registration response received: {data}")
+                logger.info(f"Registration response type: {type(data)}")
+                
+                if isinstance(data, dict):
+                    # Expected format: JSON object with serialNumber, status, and reason
+                    status = data.get("status", "")
+                    reason = data.get("reason", "")
+                    serial_number = data.get("serialNumber", "")
                     
-                    # Save serial number to config
-                    self.config['polar_cloud']['serial_number'] = self.serial_number
-                    self.save_config()
+                    logger.info(f"Response status: {status}")
+                    logger.info(f"Response reason: {reason}")
+                    logger.info(f"Response serialNumber: {serial_number}")
                     
-                    logger.info(f"Successfully registered with serial number: {self.serial_number}")
-                    
-                    # Disconnect and reconnect as per protocol
-                    # "Once successfully registered as indicated by receipt of a registerResponse command from the Status Server, 
-                    # the printer should disconnect from the Status Server and then reconnect. Upon reconnecting it will be 
-                    # sent a new welcome command to which it can respond with hello and validate the connection with its new serial number."
-                    logger.info("Disconnecting after registration as per protocol - will reconnect automatically")
-                    await self.sio.disconnect()
+                    if status == "SUCCESS" and reason == "SUCCESS" and serial_number:
+                        # Save serial number to config
+                        self.serial_number = serial_number
+                        self.config['polar_cloud']['serial_number'] = self.serial_number
+                        self.save_config()
+                        
+                        logger.info(f"Successfully registered with serial number: {self.serial_number}")
+                        
+                        # Disconnect and reconnect as per protocol
+                        logger.info("Disconnecting after registration as per protocol - will reconnect automatically")
+                        await self.sio.disconnect()
+                    else:
+                        logger.error(f"Registration failed - Status: {status}, Reason: {reason}, SerialNumber: {serial_number}")
+                        
+                elif isinstance(data, str):
+                    # Response is just a string - this might indicate an issue with the request format
+                    logger.warning(f"Received string response instead of expected JSON object: {data}")
+                    if data.upper() == "SUCCESS":
+                        logger.error("Registration appears successful but no serial number provided - this suggests the registration request may be malformed")
+                    else:
+                        logger.error(f"Registration failed with string response: {data}")
+                        
                 else:
-                    logger.error(f"Registration failed: {data.get('reason', 'Unknown error')}")
+                    # Unexpected response format
+                    logger.error(f"Unexpected registration response format: {type(data)} = {data}")
+                    
             except Exception as e:
                 logger.error(f"Error handling registration response: {e}")
         
@@ -660,8 +713,8 @@ class PolarCloudService:
                 "myInfo": {
                     "MAC": self.get_mac_address()
                 },
-                "machineType": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
-                "printerType": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
+                # "machineType": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
+                # "printerType": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
             }
             
             await self.sio.emit("register", registration_data)
@@ -753,8 +806,8 @@ class PolarCloudService:
         
         try:
             await self.sio.connect(server_url, transports=['websocket'])
-            logger.info(f"Connected to Polar Cloud Socket.IO server at {server_url}")
-            return True
+            # Connection status will be updated by the connect event handler
+            return self.connected
         except Exception as e:
             logger.error(f"Error connecting to Polar Cloud Socket.IO server: {e}")
             self.connected = False
