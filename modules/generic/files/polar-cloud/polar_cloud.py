@@ -87,7 +87,7 @@ class PolarCloudService:
         self.last_status = None
         self.disconnect_on_register = True  # Enable disconnect after registration as per protocol
         self.disconnect_on_unregister = False
-        self.status_file = '/tmp/polar_cloud_status.json'  # Status file for Moonraker plugin
+        self.status_file = '/home/pi/printer_data/logs/polar_cloud_status.json'  # Status file for Moonraker plugin
         
         # Image upload functionality
         self.upload_urls = {}  # Store pre-signed URLs by type
@@ -157,7 +157,7 @@ class PolarCloudService:
             self.write_status_file()
         
         @self.sio.event
-        async def disconnect():
+        async def disconnect(data=None):
             """Handle disconnection"""
             logger.warning("Disconnected from Polar Cloud Socket.IO server")
             self.connected = False
@@ -230,6 +230,8 @@ class PolarCloudService:
                         # Disconnect and reconnect as per protocol
                         logger.info("Disconnecting after registration as per protocol - will reconnect automatically")
                         await self.sio.disconnect()
+                        # Wait for disconnect to complete before allowing reconnection
+                        await asyncio.sleep(2)
                     else:
                         logger.error(f"Registration failed - Status: {status}, Reason: {reason}, SerialNumber: {serial_number}")
                         

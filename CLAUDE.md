@@ -175,7 +175,7 @@ Essential event handlers for proper registration:
 - `helloResponse` - Handle authentication success/failure and update status file
 
 ### Real-time Status Communication
-The service writes real-time status to `/tmp/polar_cloud_status.json` which includes:
+The service writes real-time status to `/home/pi/printer_data/logs/polar_cloud_status.json` which includes:
 - `connected`: Socket.IO connection state
 - `authenticated`: Hello authentication success state
 - `serial_number`: Current assigned serial number
@@ -184,6 +184,8 @@ The service writes real-time status to `/tmp/polar_cloud_status.json` which incl
 - `webcam_enabled`: Camera configuration state
 
 The Moonraker plugin reads this file to provide accurate status to the web interface.
+
+**CRITICAL**: Status file location changed from `/tmp/polar_cloud_status.json` to `/home/pi/printer_data/logs/polar_cloud_status.json` due to systemd PrivateTmp isolation issues (see Troubleshooting section).
 
 ## Troubleshooting
 
@@ -207,7 +209,7 @@ The Moonraker plugin reads this file to provide accurate status to the web inter
 
 4. **Web Interface Shows Incorrect Status**
    - Web interface displays "Service Inactive" or outdated information
-   - Check if status file `/tmp/polar_cloud_status.json` exists and is being updated
+   - Check if status file `/home/pi/printer_data/logs/polar_cloud_status.json` exists and is being updated
    - Restart both `polar_cloud` and `moonraker` services
    - Verify Moonraker plugin can read the status file
 
@@ -216,6 +218,33 @@ The Moonraker plugin reads this file to provide accurate status to the web inter
    - Caused by race condition between loading options and setting value
    - Check browser console for JavaScript errors
    - Ensure machine type is selected before printer type options load
+
+### Critical Issues Discovered During Development
+
+6. **SystemD PrivateTmp Isolation Issues**
+   - **Problem**: Service reports successful file creation but files don't exist
+   - **Root Cause**: SystemD service runs with `PrivateTmp=yes` by default, creating isolated `/tmp` namespace
+   - **Symptoms**: 
+     - Logs show "File written, checking if exists: True" but `ls /tmp/polar_cloud_status.json` returns "No such file"
+     - Service writes to `/tmp/systemd-private-xxx-polar_cloud.service-xxx/tmp/` instead of actual `/tmp`
+   - **Solution**: Use shared directory like `/home/pi/printer_data/logs/` instead of `/tmp`
+   - **Debug Command**: `sudo cat /proc/$(pgrep -f polar_cloud)/mountinfo | grep tmp` to see mount isolation
+
+7. **Socket.IO Disconnect Handler Arguments**
+   - **Problem**: `TypeError: disconnect() takes 0 positional arguments but 1 was given`
+   - **Root Cause**: Socket.IO library passes optional data parameter to disconnect handlers
+   - **Solution**: Change handler from `async def disconnect():` to `async def disconnect(data=None):`
+
+8. **Web Interface API Response Parsing**
+   - **Problem**: API returns correct data but UI doesn't update
+   - **Root Cause**: JavaScript expects `data.result` but was using `data` directly
+   - **API Format**: `{"result": {"connected": true, ...}}`
+   - **Solution**: Change `currentStatus = data;` to `currentStatus = data.result;` in loadStatus()
+
+9. **Post-Registration Reconnection Race Condition**
+   - **Problem**: "Client is not in a disconnected state" error after registration
+   - **Root Cause**: Service tries to reconnect before disconnect completes
+   - **Solution**: Add `await asyncio.sleep(2)` after `await self.sio.disconnect()` in registration handler
 
 ### Common Issues
 1. **Socket.IO Connection Failures**
@@ -232,6 +261,12 @@ The Moonraker plugin reads this file to provide accurate status to the web inter
    - Ensure nginx configuration includes polar-cloud location
    - Verify files are in `/home/pi/polar-cloud/web/`
    - Check nginx error logs
+
+4. **Read-Only Filesystem Issues**
+   - **Problem**: "OSError: [Errno 30] Read-only file system"
+   - **Diagnosis**: Check `mount | grep " / "` for filesystem mount options
+   - **Temporary Fix**: `sudo mount -o remount,rw /` (if needed)
+   - **Best Practice**: Use directories known to be writable like `/home/pi/printer_data/logs/`
 
 ### Development Workflow
 1. Make changes to files in `modules/generic/files/polar-cloud/`

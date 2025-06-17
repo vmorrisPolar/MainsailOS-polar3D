@@ -36,6 +36,10 @@ class PolarCloudPlugin:
             "/server/polar_cloud/config", ["GET", "POST"],
             self._handle_config_request
         )
+        self.server.register_endpoint(
+            "/server/polar_cloud/export_logs", ["GET"],
+            self._handle_export_logs_request
+        )
         
         logging.info("Polar Cloud plugin loaded successfully")
 
@@ -82,7 +86,7 @@ class PolarCloudPlugin:
             service_status = "active" if result.returncode == 0 else "inactive"
             
             # Try to read real-time status from the service's status file
-            status_file = '/tmp/polar_cloud_status.json'
+            status_file = '/home/pi/printer_data/logs/polar_cloud_status.json'
             realtime_status = {}
             try:
                 if os.path.exists(status_file):
@@ -197,6 +201,185 @@ class PolarCloudPlugin:
         except Exception as e:
             logging.error(f"Error handling config request: {e}")
             return {"error": str(e)}
+
+    async def _handle_export_logs_request(self, web_request):
+        """Handle logs export request"""
+        try:
+            import datetime
+            import socket
+            
+            # Get current timestamp
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            hostname = socket.gethostname()
+            
+            logs = []
+            logs.append("=" * 60)
+            logs.append(f"POLAR CLOUD DIAGNOSTIC LOGS")
+            logs.append(f"Generated: {datetime.datetime.now().isoformat()}")
+            logs.append(f"Hostname: {hostname}")
+            logs.append("=" * 60)
+            logs.append("")
+            
+            # 1. System Information
+            logs.append("=== SYSTEM INFORMATION ===")
+            try:
+                result = subprocess.run(['uname', '-a'], capture_output=True, text=True, timeout=5)
+                logs.append(f"System: {result.stdout.strip()}")
+            except:
+                logs.append("System: Unable to retrieve")
+            
+            try:
+                result = subprocess.run(['uptime'], capture_output=True, text=True, timeout=5)
+                logs.append(f"Uptime: {result.stdout.strip()}")
+            except:
+                logs.append("Uptime: Unable to retrieve")
+            logs.append("")
+            
+            # 2. Network Connectivity Tests
+            logs.append("=== NETWORK CONNECTIVITY ===")
+            
+            # Test DNS resolution
+            try:
+                import socket
+                socket.gethostbyname('printer4.polar3d.com')
+                logs.append("✓ DNS Resolution: printer4.polar3d.com resolved successfully")
+            except Exception as e:
+                logs.append(f"✗ DNS Resolution: Failed to resolve printer4.polar3d.com - {e}")
+            
+            # Test ping to Polar Cloud
+            try:
+                result = subprocess.run(['ping', '-c', '3', '-W', '5', 'printer4.polar3d.com'], 
+                                      capture_output=True, text=True, timeout=20)
+                if result.returncode == 0:
+                    logs.append("✓ Ping Test: printer4.polar3d.com is reachable")
+                    # Extract packet loss info
+                    for line in result.stdout.split('\n'):
+                        if 'packet loss' in line:
+                            logs.append(f"  {line.strip()}")
+                else:
+                    logs.append("✗ Ping Test: printer4.polar3d.com is not reachable")
+            except Exception as e:
+                logs.append(f"✗ Ping Test: Failed - {e}")
+            
+            # Test HTTPS connectivity
+            try:
+                import requests
+                response = requests.get('https://printer4.polar3d.com', timeout=10)
+                logs.append(f"✓ HTTPS Test: printer4.polar3d.com responded with status {response.status_code}")
+            except Exception as e:
+                logs.append(f"✗ HTTPS Test: Failed to connect - {e}")
+            logs.append("")
+            
+            # 3. Service Status
+            logs.append("=== SERVICE STATUS ===")
+            try:
+                result = subprocess.run(['systemctl', 'is-active', 'polar_cloud'], 
+                                      capture_output=True, text=True, timeout=5)
+                status = result.stdout.strip()
+                logs.append(f"Polar Cloud Service: {status}")
+                
+                if status == "active":
+                    # Get service details
+                    result = subprocess.run(['systemctl', 'status', 'polar_cloud', '--no-pager', '-l'], 
+                                          capture_output=True, text=True, timeout=10)
+                    logs.append("Service Details:")
+                    for line in result.stdout.split('\n')[:10]:  # First 10 lines
+                        if line.strip():
+                            logs.append(f"  {line}")
+                            
+            except Exception as e:
+                logs.append(f"Service Status: Error checking - {e}")
+            logs.append("")
+            
+            # 4. Current Status File
+            logs.append("=== CURRENT STATUS ===")
+            status_file = '/home/pi/printer_data/logs/polar_cloud_status.json'
+            try:
+                if os.path.exists(status_file):
+                    with open(status_file, 'r') as f:
+                        status_content = f.read()
+                    logs.append("Status File Contents:")
+                    logs.append(status_content)
+                else:
+                    logs.append("Status File: Not found")
+            except Exception as e:
+                logs.append(f"Status File: Error reading - {e}")
+            logs.append("")
+            
+            # 5. Configuration
+            logs.append("=== CONFIGURATION ===")
+            config_file = '/home/pi/printer_data/config/polar_cloud.conf'
+            try:
+                if os.path.exists(config_file):
+                    with open(config_file, 'r') as f:
+                        config_lines = f.readlines()
+                    logs.append("Configuration (sensitive data masked):")
+                    for line in config_lines:
+                        # Mask sensitive information
+                        if 'pin' in line.lower() and '=' in line:
+                            key, value = line.split('=', 1)
+                            logs.append(f"{key}=***MASKED***")
+                        else:
+                            logs.append(line.rstrip())
+                else:
+                    logs.append("Configuration: File not found")
+            except Exception as e:
+                logs.append(f"Configuration: Error reading - {e}")
+            logs.append("")
+            
+            # 6. Recent Service Logs
+            logs.append("=== RECENT SERVICE LOGS (Last 50 lines) ===")
+            try:
+                result = subprocess.run(['journalctl', '-u', 'polar_cloud', '-n', '50', '--no-pager'], 
+                                      capture_output=True, text=True, timeout=15)
+                if result.returncode == 0:
+                    logs.append(result.stdout)
+                else:
+                    logs.append("Unable to retrieve service logs")
+            except Exception as e:
+                logs.append(f"Service Logs: Error retrieving - {e}")
+            logs.append("")
+            
+            # 7. Moonraker Logs (last few lines mentioning polar_cloud)
+            logs.append("=== MOONRAKER LOGS (Polar Cloud related) ===")
+            try:
+                result = subprocess.run(['grep', '-i', 'polar', '/home/pi/printer_data/logs/moonraker.log'], 
+                                      capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    # Get last 20 lines
+                    lines = result.stdout.strip().split('\n')
+                    logs.append("Recent Polar Cloud related entries:")
+                    for line in lines[-20:]:
+                        logs.append(line)
+                else:
+                    logs.append("No Polar Cloud related entries found in Moonraker logs")
+            except Exception as e:
+                logs.append(f"Moonraker Logs: Error retrieving - {e}")
+            
+            logs.append("")
+            logs.append("=" * 60)
+            logs.append("END OF DIAGNOSTIC LOGS")
+            logs.append("=" * 60)
+            
+            # Combine all logs
+            log_content = '\n'.join(logs)
+            
+            # Create response with proper headers for file download
+            filename = f"polar_cloud_logs_{hostname}_{timestamp}.txt"
+            
+            # Return as downloadable file
+            from aiohttp.web import Response
+            return Response(
+                body=log_content.encode('utf-8'),
+                headers={
+                    'Content-Type': 'text/plain',
+                    'Content-Disposition': f'attachment; filename="{filename}"'
+                }
+            )
+            
+        except Exception as e:
+            logging.error(f"Error generating logs export: {e}")
+            return {"error": f"Failed to export logs: {str(e)}"}
 
 def load_component(config):
     return PolarCloudPlugin(config) 

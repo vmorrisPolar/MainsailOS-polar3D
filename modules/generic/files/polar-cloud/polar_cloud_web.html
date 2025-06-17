@@ -361,6 +361,9 @@
                 <button class="btn btn-secondary" id="refresh-btn">
                     <span>🔄</span> Refresh Status
                 </button>
+                <button class="btn btn-secondary" id="export-logs-btn">
+                    <span>📋</span> Export Logs
+                </button>
             </div>
         </div>
 
@@ -393,6 +396,7 @@
         const connectBtn = document.getElementById('connect-btn');
         const disconnectBtn = document.getElementById('disconnect-btn');
         const refreshBtn = document.getElementById('refresh-btn');
+        const exportLogsBtn = document.getElementById('export-logs-btn');
         const loading = document.getElementById('loading');
         const message = document.getElementById('message');
 
@@ -400,6 +404,7 @@
         connectBtn.addEventListener('click', handleConnect);
         disconnectBtn.addEventListener('click', handleDisconnect);
         refreshBtn.addEventListener('click', loadStatus);
+        exportLogsBtn.addEventListener('click', handleExportLogs);
         machineTypeSelect.addEventListener('change', handleMachineTypeChange);
         
         // Save form values to localStorage when they change
@@ -465,7 +470,7 @@
                     throw new Error(data.error);
                 }
                 
-                currentStatus = data;
+                currentStatus = data.result;
                 updateUI();
                 
             } catch (error) {
@@ -629,11 +634,54 @@
             }
         }
 
+        async function handleExportLogs() {
+            try {
+                showLoading(true);
+                showMessage('Generating diagnostic logs, please wait...', 'success');
+                
+                const response = await fetch(`${API_BASE}/export_logs`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                // Get the filename from the response headers if available
+                const contentDisposition = response.headers.get('Content-Disposition');
+                let filename = 'polar_cloud_logs.txt';
+                if (contentDisposition) {
+                    const matches = contentDisposition.match(/filename="(.+)"/);
+                    if (matches) {
+                        filename = matches[1];
+                    }
+                }
+                
+                // Create blob and download
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                
+                showMessage('Diagnostic logs exported successfully!', 'success');
+                
+            } catch (error) {
+                console.error('Error exporting logs:', error);
+                showMessage('Failed to export logs: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
         function showLoading(show) {
             loading.classList.toggle('show', show);
             connectBtn.disabled = show;
             disconnectBtn.disabled = show;
             refreshBtn.disabled = show;
+            exportLogsBtn.disabled = show;
         }
 
         function showMessage(text, type) {
