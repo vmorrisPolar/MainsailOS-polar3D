@@ -81,13 +81,28 @@ class PolarCloudPlugin:
             
             service_status = "active" if result.returncode == 0 else "inactive"
             
+            # Try to read real-time status from the service's status file
+            status_file = '/tmp/polar_cloud_status.json'
+            realtime_status = {}
+            try:
+                if os.path.exists(status_file):
+                    with open(status_file, 'r') as f:
+                        realtime_status = json.load(f)
+            except Exception as e:
+                logging.debug(f"Could not read status file: {e}")
+            
+            # Combine configuration and real-time status
             return {
                 "service_status": service_status,
-                "registered": bool(self.config.get('polar_cloud', 'serial_number', fallback='')),
-                "serial_number": self.config.get('polar_cloud', 'serial_number', fallback=''),
-                "username": self.config.get('polar_cloud', 'username', fallback=''),
-                "machine_type": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
-                "printer_type": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian')
+                "connected": realtime_status.get('connected', False),
+                "authenticated": realtime_status.get('authenticated', False),
+                "registered": bool(realtime_status.get('serial_number') or self.config.get('polar_cloud', 'serial_number', fallback='')),
+                "serial_number": realtime_status.get('serial_number') or self.config.get('polar_cloud', 'serial_number', fallback=''),
+                "username": realtime_status.get('username') or self.config.get('polar_cloud', 'username', fallback=''),
+                "machine_type": realtime_status.get('machine_type') or self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
+                "printer_type": realtime_status.get('printer_type') or self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
+                "last_update": realtime_status.get('last_update', ''),
+                "webcam_enabled": realtime_status.get('webcam_enabled', True)
             }
         except Exception as e:
             logging.error(f"Error getting polar cloud status: {e}")

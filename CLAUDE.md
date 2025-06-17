@@ -153,6 +153,13 @@ The `registerResponse` must be handled as a JSON object with exact format:
 
 **Common Bug**: If the code receives `"SUCCESS"` as a string instead of the JSON object above, it indicates the registration request format is incorrect or the server is not recognizing the request properly.
 
+### Hello Command Field Requirements
+The `hello` command must include these exact field names:
+- `MAC` (not `macAddress`) - Network MAC address
+- `printerMake` - Must be the actual printer model selected by user (e.g., "Ender 3", "Prusa Mini") for correct slicing profiles
+- `camOff` - Integer (0=camera enabled, 1=camera disabled) to inform Polar Cloud UI layout
+- `mfgSn` - Manufacturer serial number (use "MNSL-" prefix + MAC for Mainsail identification)
+
 ### Registration State Management
 - **First-time registration**: No `serial_number` in config → sends `register` command
 - **Subsequent connections**: Has `serial_number` in config → sends `hello` command
@@ -160,12 +167,23 @@ The `registerResponse` must be handled as a JSON object with exact format:
 
 ### Socket.IO Event Handlers Required
 Essential event handlers for proper registration:
-- `connect` - Track connection state
-- `disconnect` - Reset connection state and hello flag
+- `connect` - Track connection state and update status file
+- `disconnect` - Reset connection state, hello flag, and update status file
 - `connect_error` - Handle connection failures
 - `welcome` - Receive challenge and determine register vs hello
 - `registerResponse` - Handle registration success/failure and save serial number
-- `helloResponse` - Handle authentication success/failure
+- `helloResponse` - Handle authentication success/failure and update status file
+
+### Real-time Status Communication
+The service writes real-time status to `/tmp/polar_cloud_status.json` which includes:
+- `connected`: Socket.IO connection state
+- `authenticated`: Hello authentication success state
+- `serial_number`: Current assigned serial number
+- `username`: Configured username
+- `last_update`: Timestamp of last status update
+- `webcam_enabled`: Camera configuration state
+
+The Moonraker plugin reads this file to provide accurate status to the web interface.
 
 ## Troubleshooting
 
@@ -186,6 +204,18 @@ Essential event handlers for proper registration:
    - Check event handlers are properly configured
    - Verify reconnection settings allow automatic reconnection
    - Review logs for connection errors or event handling exceptions
+
+4. **Web Interface Shows Incorrect Status**
+   - Web interface displays "Service Inactive" or outdated information
+   - Check if status file `/tmp/polar_cloud_status.json` exists and is being updated
+   - Restart both `polar_cloud` and `moonraker` services
+   - Verify Moonraker plugin can read the status file
+
+5. **Printer Type Not Displayed in Web Interface**
+   - Dropdown shows "Select printer type..." instead of selected value
+   - Caused by race condition between loading options and setting value
+   - Check browser console for JavaScript errors
+   - Ensure machine type is selected before printer type options load
 
 ### Common Issues
 1. **Socket.IO Connection Failures**

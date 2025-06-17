@@ -410,8 +410,18 @@
 
         // Initialize
         loadFormFromStorage(); // Load saved form values first
-        loadStatus();
-        loadPrinterTypes();
+        
+        // Load printer types after form is restored, then load status
+        if (machineTypeSelect.value) {
+            loadPrinterTypes().then(() => {
+                // Now that printer types are loaded, load the status
+                // which might override the form values with server values
+                loadStatus();
+            });
+        } else {
+            // No machine type selected yet, just load status
+            loadStatus();
+        }
         
         function saveFormToStorage() {
             const formData = {
@@ -433,7 +443,12 @@
                     if (formData.username) usernameInput.value = formData.username;
                     if (formData.pin) pinInput.value = formData.pin;
                     if (formData.machine_type) machineTypeSelect.value = formData.machine_type;
-                    if (formData.printer_type) printerTypeSelect.value = formData.printer_type;
+                    // Note: printer_type will be set after loadPrinterTypes() completes
+                    
+                    // Store the printer type to be set later
+                    if (formData.printer_type) {
+                        printerTypeSelect.dataset.savedValue = formData.printer_type;
+                    }
                 }
             } catch (error) {
                 console.error('Error loading form from storage:', error);
@@ -471,11 +486,24 @@
         function updateUI() {
             // Update status display
             const isActive = currentStatus.service_status === 'active';
+            const isConnected = currentStatus.connected === true;
+            const isAuthenticated = currentStatus.authenticated === true;
             const isRegistered = currentStatus.registered;
             
-            // Service status
-            serviceDot.className = `status-dot ${isActive ? 'active' : 'inactive'}`;
-            serviceStatus.textContent = currentStatus.service_status || 'inactive';
+            // Service status - show connection state
+            if (!isActive) {
+                serviceDot.className = 'status-dot inactive';
+                serviceStatus.textContent = 'Service Inactive';
+            } else if (isAuthenticated) {
+                serviceDot.className = 'status-dot active';
+                serviceStatus.textContent = 'Connected & Authenticated';
+            } else if (isConnected) {
+                serviceDot.className = 'status-dot warning';
+                serviceStatus.textContent = 'Connected (Not Authenticated)';
+            } else {
+                serviceDot.className = 'status-dot warning';
+                serviceStatus.textContent = 'Service Active (Not Connected)';
+            }
             
             // Registration status
             registrationDot.className = `status-dot ${isRegistered ? 'active' : (isActive ? 'warning' : 'inactive')}`;
@@ -493,10 +521,14 @@
             
             if (currentStatus.machine_type && (!machineTypeSelect.value || currentStatus.machine_type !== machineTypeSelect.value)) {
                 machineTypeSelect.value = currentStatus.machine_type;
-                // Load printer types for the current machine type
-                loadPrinterTypes();
-            }
-            if (currentStatus.printer_type && (!printerTypeSelect.value || currentStatus.printer_type !== printerTypeSelect.value)) {
+                // Load printer types for the current machine type, then set the value
+                loadPrinterTypes().then(() => {
+                    if (currentStatus.printer_type) {
+                        printerTypeSelect.value = currentStatus.printer_type;
+                    }
+                });
+            } else if (currentStatus.printer_type && (!printerTypeSelect.value || currentStatus.printer_type !== printerTypeSelect.value)) {
+                // Machine type hasn't changed, just update printer type
                 printerTypeSelect.value = currentStatus.printer_type;
             }
             
@@ -674,6 +706,12 @@
                 option.textContent = type;
                 printerTypeSelect.appendChild(option);
             });
+            
+            // Restore saved printer type value if it exists
+            if (printerTypeSelect.dataset.savedValue) {
+                printerTypeSelect.value = printerTypeSelect.dataset.savedValue;
+                delete printerTypeSelect.dataset.savedValue;
+            }
             
             // If there's a current printer type, select it
             if (currentStatus && currentStatus.printer_type) {

@@ -31,10 +31,12 @@ This implementation follows the Polar Cloud protocol as defined in the OctoPrint
 - ✅ **Camera image uploads with pre-signed POST URLs**
 - ✅ **Automatic idle image uploads every 60 seconds**
 - ✅ **Printing image uploads every 10 seconds during cloud prints**
-- ✅ Webcam image capture and transmission
+- ✅ Webcam image capture and transmission (configurable)
 - ✅ Temperature monitoring
 - ✅ Print progress tracking
 - ✅ Moonraker API integration
+- ✅ **Real-time status communication with web interface**
+- ✅ **Proper printer model identification for slicing**
 - ✅ Configurable settings
 - ✅ Systemd service integration
 
@@ -118,6 +120,29 @@ python3 /home/pi/polar-cloud/polar_cloud_config.py service status
 python3 /home/pi/polar-cloud/polar_cloud_config.py service restart
 ```
 
+## Web Interface
+
+The service includes a standalone web interface accessible at `http://your-printer-ip/polar-cloud/`
+
+### Features:
+- **Real-time Status Display**: Shows connection state, authentication status, and registration info
+- **Easy Registration**: Register your printer directly through the web interface
+- **Printer Configuration**: Select machine type and specific printer model for proper slicing
+- **Status Indicators**: 
+  - 🟢 Green: Connected and authenticated
+  - 🟠 Orange: Service active but not connected/authenticated  
+  - 🔴 Red: Service inactive
+- **Automatic Form Saving**: Your settings are saved locally and restored on reload
+
+### Usage:
+1. Navigate to `http://your-printer-ip/polar-cloud/`
+2. Enter your Polar Cloud email and PIN
+3. Select your machine type (Cartesian, Delta, etc.)
+4. Choose your specific printer model for accurate slicing
+5. Click "Connect to Polar Cloud"
+
+The web interface provides real-time feedback and automatically updates when the service status changes.
+
 ## Configuration File
 
 The configuration file is located at `/home/pi/printer_data/config/polar_cloud.conf`:
@@ -131,8 +156,20 @@ machine_type = Cartesian
 printer_type = Cartesian
 verbose = false
 max_image_size = 150000
+webcam_enabled = true
 serial_number = (auto-generated after registration)
 ```
+
+### Configuration Options:
+- `server_url`: Polar Cloud server endpoint (default: https://printer4.polar3d.com)
+- `username`: Your Polar Cloud account email
+- `pin`: Your Polar Cloud account PIN
+- `machine_type`: Printer architecture (Cartesian, Delta, Belt)
+- `printer_type`: Specific printer model (e.g., "Ender 3", "Prusa Mini") - **important for correct slicing**
+- `max_image_size`: Maximum webcam image size in bytes (default: 150000)
+- `webcam_enabled`: Enable/disable webcam uploads (true/false) - affects UI layout in Polar Cloud
+- `verbose`: Enable debug logging (true/false)
+- `status_interval`: Status update frequency in seconds (default: 60)
 
 ## Protocol Messages
 

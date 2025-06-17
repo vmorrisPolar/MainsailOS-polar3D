@@ -73,8 +73,7 @@ class PolarCloudService:
             reconnection=True,
             reconnection_attempts=0,  # Unlimited attempts
             reconnection_delay=1,
-            reconnection_delay_max=30,
-            max_reconnection_attempts=0
+            reconnection_delay_max=30
         )
         self.connected = False
         self.running = True
@@ -88,6 +87,7 @@ class PolarCloudService:
         self.last_status = None
         self.disconnect_on_register = True  # Enable disconnect after registration as per protocol
         self.disconnect_on_unregister = False
+        self.status_file = '/tmp/polar_cloud_status.json'  # Status file for Moonraker plugin
         
         # Image upload functionality
         self.upload_urls = {}  # Store pre-signed URLs by type
@@ -154,6 +154,7 @@ class PolarCloudService:
             """Handle successful connection"""
             logger.info("Connected to Polar Cloud Socket.IO server")
             self.connected = True
+            self.write_status_file()
         
         @self.sio.event
         async def disconnect():
@@ -161,6 +162,7 @@ class PolarCloudService:
             logger.warning("Disconnected from Polar Cloud Socket.IO server")
             self.connected = False
             self.hello_sent = False
+            self.write_status_file()
         
         @self.sio.event
         async def connect_error(data):
@@ -221,6 +223,7 @@ class PolarCloudService:
                         self.serial_number = serial_number
                         self.config['polar_cloud']['serial_number'] = self.serial_number
                         self.save_config()
+                        self.write_status_file()
                         
                         logger.info(f"Successfully registered with serial number: {self.serial_number}")
                         
@@ -249,8 +252,35 @@ class PolarCloudService:
         async def helloResponse(data):
             """Handle hello response"""
             try:
-                if data.get("success"):
+                logger.info(f"Hello response received: {data}")
+                logger.info(f"Hello response type: {type(data)}")
+                
+                # Check for success based on protocol specification
+                # Expected format: {"status": "SUCCESS"} or {"status": "FAILED", "message": "error"}
+                success = False
+                reason = None
+                
+                if isinstance(data, dict):
+                    status = data.get("status", "")
+                    success = (status == "SUCCESS")
+                    
+                    if status == "FAILED":
+                        reason = data.get("message", "No error message provided")
+                    elif status == "DELETED":
+                        reason = "Printer has been deleted from Polar Cloud"
+                    elif not success:
+                        reason = f"Unknown status: {status}"
+                elif isinstance(data, str):
+                    success = data.upper() == "SUCCESS"
+                    reason = data if not success else None
+                else:
+                    reason = f"Unexpected response type: {type(data)} = {data}"
+                
+                if success:
                     logger.info("Hello response received successfully")
+                    self.hello_sent = True
+                    self.write_status_file()
+                    
                     # Start sending status updates and request initial upload URLs
                     if not hasattr(self, '_status_task') or self._status_task.done():
                         self._status_task = asyncio.create_task(self.status_loop())
@@ -259,7 +289,10 @@ class PolarCloudService:
                     await self.request_upload_url("idle")
                     
                 else:
-                    logger.error(f"Hello failed: {data.get('reason', 'Unknown error')}")
+                    logger.error(f"Hello failed - Response: {data}")
+                    if reason:
+                        logger.error(f"Failure reason: {reason}")
+                    self.hello_sent = False
             except Exception as e:
                 logger.error(f"Error handling hello response: {e}")
         
@@ -339,7 +372,8 @@ class PolarCloudService:
                 'machine_type': 'Cartesian',
                 'printer_type': 'Cartesian',
                 'verbose': 'false',
-                'max_image_size': '150000'
+                'max_image_size': '150000',
+                'webcam_enabled': 'true'
             }
             self.save_config()
     
@@ -348,6 +382,27 @@ class PolarCloudService:
         os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
         with open(self.config_file, 'w') as f:
             self.config.write(f)
+    
+    def write_status_file(self):
+        """Write current status to file for Moonraker plugin"""
+        try:
+            status = {
+                "connected": self.connected,
+                "authenticated": self.hello_sent,
+                "serial_number": self.serial_number or "",
+                "username": self.config.get('polar_cloud', 'username', fallback=''),
+                "machine_type": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
+                "printer_type": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
+                "last_update": datetime.now().isoformat(),
+                "challenge": self.challenge or "",
+                "webcam_enabled": self.config.get('polar_cloud', 'webcam_enabled', fallback='true').lower() == 'true'
+            }
+            
+            with open(self.status_file, 'w') as f:
+                json.dump(status, f)
+                
+        except Exception as e:
+            logger.debug(f"Error writing status file: {e}")
     
     def ensure_keys(self):
         """Generate or load RSA key pair"""
@@ -550,11 +605,15 @@ class PolarCloudService:
             if response.status_code == 200:
                 return response.content
             
-            logger.warning("Could not capture webcam image")
+            logger.debug("No webcam available for snapshot")
             return None
             
+        except requests.exceptions.ConnectionError as e:
+            # This is expected when no webcam is configured
+            logger.debug("Webcam not configured or unavailable")
+            return None
         except Exception as e:
-            logger.error(f"Error capturing webcam image: {e}")
+            logger.warning(f"Unexpected error capturing webcam image: {e}")
             return None
     
     async def resize_image(self, image_data, max_size=None):
@@ -657,6 +716,11 @@ class PolarCloudService:
     async def handle_image_uploads(self):
         """Handle periodic image uploads based on printer state"""
         try:
+            # Check if webcam is disabled in config
+            webcam_enabled = self.config.get('polar_cloud', 'webcam_enabled', fallback='true').lower() == 'true'
+            if not webcam_enabled:
+                return
+                
             status = await self.get_printer_status()
             printer_status = status.get("status", self.PSTATE_IDLE)
             current_time = time.time()
@@ -732,10 +796,13 @@ class PolarCloudService:
                 logger.error("Cannot send hello: no challenge received")
                 return
                 
+            # Check if webcam is enabled
+            webcam_enabled = self.config.get('polar_cloud', 'webcam_enabled', fallback='true').lower() == 'true'
+            
             hello_data = {
                 "serialNumber": self.serial_number,
                 "protocol": "2",
-                "macAddress": self.get_mac_address(),
+                "MAC": self.get_mac_address(),  # Changed from macAddress to MAC
                 "localIP": self.get_ip_address(),
                 "signature": base64.b64encode(
                     self.private_key.sign(
@@ -744,8 +811,10 @@ class PolarCloudService:
                         hashes.SHA256()
                     )
                 ).decode('utf-8'),
-                "machineType": self.config.get('polar_cloud', 'machine_type', fallback='Cartesian'),
-                "printerType": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),
+                "mfgSn": "MNSL-" + self.get_mac_address().replace(":", ""),  # Add manufacturer serial
+                "printerMake": self.config.get('polar_cloud', 'printer_type', fallback='Cartesian'),  # Use actual printer type
+                "version": "1.0.0",
+                "camOff": 0 if webcam_enabled else 1  # 0=camera on, 1=camera off
             }
             
             await self.sio.emit("hello", hello_data)
